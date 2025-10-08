@@ -771,7 +771,23 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     }
     usleep(50000);
 
-    // 7a. Core reset sequence (critical for nonce reception)
+    // 7b. CRITICAL: Clear UART RX FIFO after baud rate change
+    // Factory test sub_20608 @ 0x20608 calls this immediately after baud change
+    // Removes garbage data accumulated during baud rate transition
+    printf("  Clearing UART RX FIFO after baud rate change...\n");
+    int nonce_count = bm1398_get_nonce_count(ctx);
+    if (nonce_count > 0) {
+        printf("    Found %d stale entries in nonce FIFO, clearing...\n", nonce_count);
+        nonce_response_t discard_nonces[256];
+        int cleared = bm1398_read_nonces(ctx, discard_nonces,
+                                        nonce_count < 256 ? nonce_count : 256);
+        printf("    Cleared %d stale nonce entries\n", cleared);
+    } else {
+        printf("    Nonce FIFO already empty\n");
+    }
+    usleep(10000);
+
+    // 7d. Core reset sequence (critical for nonce reception)
     // Use broadcast writes to avoid system hang with 114 chips
     printf("  Performing core reset sequence (broadcast)...\n");
 
@@ -824,9 +840,9 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     printf("  Waiting 2 seconds for core stabilization...\n");
     sleep(2);
 
-    // 7b. Configure FPGA nonce timeout based on chip frequency
-    // Factory test: dhash_set_timeout() at sub_222f8
-    // Writes to logical FPGA index 20 → physical offset 0x08C
+    // 7e. Configure FPGA nonce timeout based on chip frequency
+    // Factory test: dhash_set_timeout() at sub_222f8 @ 0x222f8
+    // Writes to logical FPGA index 20 (0x14) → physical offset 0x08C
     // Formula: timeout_value = (calculated_timeout & 0x1FFFF) | 0x80000000
     printf("  Configuring FPGA nonce timeout for %d MHz...\n", FREQUENCY_525MHZ);
     uint32_t timeout_calc = 0x1FFFF / FREQUENCY_525MHZ;  // Formula: 0x1FFFF / freq_mhz
