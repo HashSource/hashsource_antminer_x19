@@ -15,6 +15,10 @@ When single_board_test is ran, it assumes the connected hashboard is already rec
 
 /home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro
 
+Here is the single_board_test output saved in a log:
+
+/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/docs/single_board_test_pt1.log
+
 We also have the binary_ninja_mcp MCP server available with single_board_test and bmminer binaries loaded and ready for analysis.
 
 Here are also logs from bmminer that may be useful to understand how it works:
@@ -42,6 +46,18 @@ Verify in our pattern test program and work submission that the PSU is enabled a
 
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/hashsource_x19/src/fan_test.c
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/hashsource_x19/src/psu_test.c
+
+We have the Bitmain Test Fixture deployed to the HashSource test machine:
+Here are the files that are deployed:
+/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/br2_external_bitmain/board/x19_xilinx/rootfs-overlay/root/test_fixture/Config.ini
+
+/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/br2_external_bitmain/board/x19_xilinx/rootfs-overlay/root/test_fixture/run_debug.sh
+
+/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/br2_external_bitmain/board/x19_xilinx/rootfs-overlay/root/test_fixture/run.sh
+
+/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/br2_external_bitmain/board/x19_xilinx/rootfs-overlay/root/test_fixture/single_board_test
+
+When you run the run_debug.sh script, it runs single_board_test with the fpga_logger, that will log all the fpga registers to a file in /tmp on the machine, this is very useful to understand how Bitmain's tools are communicating with the chips. single_board_test runs a PT1 test, however we could configure it to run a PT2 test in the Config.ini file. Also, when running single_board_test, it does not automatically exit, so you need to wait 1 minute, and then kill the process.
 
 Don't create new documents with your analysis, fix our code directly.
 When writing code, the code should be concise, pragmatic, maintainable, idiomatic, modern, type-safe, secure and performant.

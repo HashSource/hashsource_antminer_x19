@@ -81,6 +81,17 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // CRITICAL: Perform power release cycle before initialization
+    printf("====================================\n");
+    printf("Performing Power Release Cycle\n");
+    printf("====================================\n");
+    // Disable PSU via GPIO 907
+    extern int gpio_setup(int gpio, int value);
+    gpio_setup(907, 1);
+    printf("PSU disabled. Waiting 5 seconds for power discharge...\n");
+    sleep(5);
+    printf("Power release complete.\n\n");
+
     // Power on PSU
     printf("====================================\n");
     printf("Powering On PSU\n");
@@ -112,15 +123,18 @@ int main(int argc, char *argv[]) {
 
     // Reduce voltage to operational level (CRITICAL: must match bmminer!)
     printf("====================================\n");
-    printf("Reducing Voltage to Operational Level\n");
+    printf("Ramping Voltage to Operational Level\n");
     printf("====================================\n");
-    printf("Reducing from 15.0V to 12.6V (matching bmminer)...\n");
-    if (bm1398_psu_set_voltage(&ctx, 12600) < 0) {
-        fprintf(stderr, "Warning: Failed to reduce voltage to 12.6V\n");
-        fprintf(stderr, "Continuing with test at 15.0V...\n");
-    } else {
-        printf("Voltage reduced to 12.6V\n");
+    printf("Ramping from 15.0V to 12.6V...\n");
+    for (uint32_t v = 15000; v >= 12600; v -= 100) {
+        if (bm1398_psu_set_voltage(&ctx, v) < 0) {
+            fprintf(stderr, "Warning: Failed to set voltage to %umV\n", v);
+            break;
+        }
+        printf("  Voltage set to %.2fV\n", v / 1000.0);
+        usleep(50000); // 50ms delay between steps
     }
+    printf("Voltage ramp complete.\n");
 
     // CRITICAL: Extended stabilization delay after voltage change
     printf("Waiting 5 seconds for voltage stabilization...\n");

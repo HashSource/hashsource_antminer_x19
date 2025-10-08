@@ -154,9 +154,10 @@ int bm1398_init(bm1398_context_t *ctx) {
     // CRITICAL: Direct register 0x080/0x088 init MUST happen FIRST
     // Before ANY other FPGA register operations!
     // These control fundamental FPGA mode/state
+    // Sequence verified from working fan_test.c
     printf("CRITICAL: Early FPGA mode initialization...\n");
 
-    // Stage 1: Boot-time initialization
+    // Stage 1: Boot-time initialization (matches fan_test.c exactly)
     ctx->fpga_regs[0x080 / 4] = 0x0080800F;
     __sync_synchronize();
     usleep(100000);
@@ -171,14 +172,6 @@ int bm1398_init(bm1398_context_t *ctx) {
     // CRITICAL: Matches bmminer and factory test initialization sequence
     // Source: Binary analysis of bmminer @ 0x45b34 and factory test @ 0x22cf0
     printf("Initializing FPGA registers (using indirect mapping)...\n");
-
-    // CRITICAL: Register 18 initialization (from factory test sub_22b58 @ 0x22b58)
-    // MUST be done BEFORE register 0 bit 30 set!
-    // Factory test writes: 0x80808000 to logical register 18
-    printf("  CRITICAL: Register 18 init...\n");
-    fpga_write_indirect(ctx, FPGA_REG_SPECIAL_18, 0x80808000);
-    printf("  Register 18 (0x084): 0x%08X\n", fpga_read_indirect(ctx, FPGA_REG_SPECIAL_18));
-    usleep(10000);
 
     // FPGA Register 0: Set bit 30 (0x40000000)
     // Source: bmminer FUN_00045b34, factory test FUN_00022cf0
@@ -428,8 +421,10 @@ int bm1398_enumerate_chips(bm1398_context_t *ctx, int chain, int num_chips) {
             errors++;
         }
 
-        // Small delay between chips
-        usleep(1000);  // 1ms
+        // CRITICAL: Delay between chip enumeration commands
+        // Factory test uses longer delays to ensure chips have time to process
+        // Each chip must receive, process, and relay the command down the chain
+        usleep(10000);  // 10ms per chip
 
         // Progress indication every 10 chips
         if ((i + 1) % 10 == 0) {
@@ -760,7 +755,12 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     if (bm1398_set_frequency(ctx, chain, FREQUENCY_525MHZ) < 0) {
         fprintf(stderr, "Warning: Frequency set failed\n");
     }
-    usleep(10000);
+
+    // CRITICAL: PLL needs time to lock and stabilize before proceeding
+    // Factory test and bmminer both have significant delays here
+    // PLLs typically need 100-500ms to achieve stable lock
+    printf("  Waiting for PLL to lock and stabilize (500ms)...\n");
+    usleep(500000);  // 500ms for PLL lock
 
     // 7. Set HIGH baud rate (12 MHz) AFTER frequency configuration
     // This is phase 2 of two-phase baud rate setup
@@ -870,15 +870,6 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     }
     usleep(10000);
 
-    // 9. Set nonce overflow control (disable overflow)
-    // Register 0x3C: Final configuration with nonce overflow disabled
-    printf("  Setting nonce overflow control (disabled)...\n");
-    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CORE_CONFIG,
-                              CORE_CONFIG_NONCE_OVF_DIS) < 0) {
-        fprintf(stderr, "Warning: Nonce overflow control failed\n");
-    }
-    usleep(10000);
-
     printf("  Stage 2 complete\n");
     return 0;
 }
@@ -951,7 +942,7 @@ int bm1398_set_baud_rate(bm1398_context_t *ctx, int chain, uint32_t baud_rate) {
 
         // Step 2: Configure BAUD_CONFIG register (0x28) - Use direct write
         printf("    Configuring BAUD_CONFIG (reg 0x28) for high-speed mode...\n");
-        bm1398_write_register(ctx, chain, true, 0, ASIC_REG_BAUD_CONFIG, 0x06008F0F);
+        bm1398_write_register(ctx, chain, true, 0, ASIC_REG_BAUD_CONFIG, 0x06008F00);
         usleep(10000);
 
         // Step 3: Configure CLK_CTRL register (0x18) with divisor + high-speed bit
@@ -1178,15 +1169,21 @@ int bm1398_enable_work_send(bm1398_context_t *ctx) {
 /**
  * Start FPGA work generation
  * Source: Bitmain start_dhash_work_gen()
+ *
+ * NOTE: This function is disabled because the direct register access
+ * corrupts the FPGA timeout register (0x8C = word offset 0x23).
+ * Work generation is already enabled via enable_work_send().
  */
 int bm1398_start_work_gen(bm1398_context_t *ctx) {
     if (!ctx || !ctx->initialized) {
         return -1;
     }
 
-    // Register 0x23 (0x8C/4) - set bit 0x40 to start
-    uint32_t val = ctx->fpga_regs[0x23];
-    ctx->fpga_regs[0x23] = val | 0x40;
+    // DISABLED: This corrupted the timeout register at 0x8C
+    // The FPGA is already configured for work reception via enable_work_send()
+    // and the initialization sequence. No additional start is needed.
+
+    printf("  Work generation control (no-op, already enabled)\n");
     return 0;
 }
 
