@@ -5,6 +5,9 @@
 # Uses fpga_logger to capture ALL FPGA register changes
 #
 
+# Cleanup only logs
+rm -rf /tmp/fpga_registers.log
+
 echo "Starting FPGA register logger..."
 
 # Start fpga_logger in background
@@ -32,4 +35,3 @@ wait "$LOGGER_PID" 2>/dev/null
 
 echo ""
 echo "Logs saved to: /tmp/fpga_registers.log"
-echo "View with: cat /tmp/fpga_registers.log"
