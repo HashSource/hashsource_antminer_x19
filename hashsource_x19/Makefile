@@ -30,6 +30,7 @@ EEPROM_DETECT = $(BIN_DIR)/eeprom_detect
 CHAIN_TEST = $(BIN_DIR)/chain_test
 WORK_TEST = $(BIN_DIR)/work_test
 PATTERN_TEST = $(BIN_DIR)/pattern_test
+TEST_FIXTURE_SHIM = $(BIN_DIR)/test_fixture_shim.so
 
 # Source files for main miner
 SRCS = $(SRC_DIR)/main.c
@@ -58,6 +59,9 @@ WORK_TEST_SRCS = $(SRC_DIR)/work_test.c $(SRC_DIR)/bm1398_asic.c
 # Source files for pattern_test (includes BM1398 driver)
 PATTERN_TEST_SRCS = $(SRC_DIR)/pattern_test.c $(SRC_DIR)/bm1398_asic.c
 
+# Source files for test fixture shim
+TEST_FIXTURE_SHIM_SRCS = $(SRC_DIR)/test_fixture_shim.c
+
 # Object files
 OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(SRCS)))
 FAN_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(FAN_SRCS)))
@@ -79,7 +83,7 @@ CFLAGS += -D_GNU_SOURCE
 LDFLAGS = -pthread -lm -lrt
 
 # Default target
-all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT) $(CHAIN_TEST) $(WORK_TEST) $(PATTERN_TEST)
+all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT) $(CHAIN_TEST) $(WORK_TEST) $(PATTERN_TEST) $(TEST_FIXTURE_SHIM)
 
 # Create directories
 dirs:
@@ -153,6 +157,14 @@ $(WORK_TEST): $(WORK_TEST_OBJS)
 $(PATTERN_TEST): $(PATTERN_TEST_OBJS)
 	@echo "Linking $@"
 	$(CC) $(PATTERN_TEST_OBJS) -o $@ $(LDFLAGS)
+	@echo "Stripping $@"
+	$(STRIP) $@
+	@echo "Build complete: $@"
+
+# Build test fixture shim (shared library for LD_PRELOAD)
+$(TEST_FIXTURE_SHIM): dirs $(TEST_FIXTURE_SHIM_SRCS)
+	@echo "Compiling test_fixture_shim.so..."
+	$(CC) -shared -fPIC -o $@ $(TEST_FIXTURE_SHIM_SRCS) -ldl -O2 -Wall
 	@echo "Stripping $@"
 	$(STRIP) $@
 	@echo "Build complete: $@"
