@@ -224,6 +224,7 @@ int bm1398_read_nonces(bm1398_context_t *ctx, nonce_response_t *nonces,
 // Utility functions
 uint32_t bm1398_detect_chains(bm1398_context_t *ctx);
 int bm1398_get_crc_error_count(bm1398_context_t *ctx);
+int gpio_setup(int gpio, int value);
 
 // PSU and hashboard power control
 int bm1398_psu_power_on(bm1398_context_t *ctx, uint32_t voltage_mv);

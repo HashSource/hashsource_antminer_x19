@@ -216,6 +216,19 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // CRITICAL: Perform power release cycle before initialization
+    printf("====================================\n");
+    printf("Performing Power Release Cycle\n");
+    printf("====================================\n");
+    // Explicitly disable PSU via GPIO
+    // This function is defined within bm1398_asic.c but not in the header, so we call it directly
+    // It sets GPIO 907 to 1, disabling the PSU.
+    // We will add a prototype for it.
+    gpio_setup(907, 1);
+    printf("PSU disabled. Waiting 5 seconds for power discharge...\n");
+    sleep(5);
+    printf("Power release complete.\n\n");
+
     // Power on PSU BEFORE chain initialization (matches bmminer sequence)
     printf("====================================\n");
     printf("Powering On PSU\n");
@@ -250,15 +263,18 @@ int main(int argc, char *argv[]) {
     // bmminer log line 122: "set_voltage_by_steps to 1260" (12.6V)
     // This is done AFTER initialization, BEFORE mining starts
     printf("====================================\n");
-    printf("Reducing Voltage to Operational Level\n");
+    printf("Ramping Voltage to Operational Level\n");
     printf("====================================\n");
-    printf("Reducing from 15.0V to 12.6V (matching bmminer)...\n");
-    if (bm1398_psu_set_voltage(&ctx, 12600) < 0) {
-        fprintf(stderr, "Warning: Failed to reduce voltage to 12.6V\n");
-        fprintf(stderr, "Continuing with test at 15.0V...\n");
-    } else {
-        printf("Voltage reduced to 12.6V\n");
+    printf("Ramping from 15.0V to 12.6V...\n");
+    for (uint32_t v = 15000; v >= 12600; v -= 100) {
+        if (bm1398_psu_set_voltage(&ctx, v) < 0) {
+            fprintf(stderr, "Warning: Failed to set voltage to %umV\n", v);
+            break;
+        }
+        printf("  Voltage set to %.2fV\n", v / 1000.0);
+        usleep(50000); // 50ms delay between steps
     }
+    printf("Voltage ramp complete.\n");
 
     // CRITICAL: Extended stabilization delay after voltage change
     // ASICs need time to adjust to new voltage before accepting work

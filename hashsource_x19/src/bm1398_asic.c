@@ -870,6 +870,15 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     }
     usleep(10000);
 
+    // 9. Set nonce overflow control (disable overflow)
+    // Register 0x3C: Final configuration with nonce overflow disabled
+    printf("  Setting nonce overflow control (disabled)...\n");
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CORE_CONFIG,
+                              CORE_CONFIG_NONCE_OVF_DIS) < 0) {
+        fprintf(stderr, "Warning: Nonce overflow control failed\n");
+    }
+    usleep(10000);
+
     printf("  Stage 2 complete\n");
     return 0;
 }
@@ -935,23 +944,13 @@ int bm1398_set_baud_rate(bm1398_context_t *ctx, int chain, uint32_t baud_rate) {
         baud_div = (400000000 / (baud_rate * 8)) - 1;
         printf("    Baud divisor (high-speed): %u (0x%X)\n", baud_div, baud_div);
 
-        // Step 1: Configure PLL3 register (0x68) - Read-Modify-Write
+        // Step 1: Configure PLL3 register (0x68) - Use direct write
         printf("    Configuring PLL3 (reg 0x68) for 400MHz UART clock...\n");
-        if (bm1398_read_register(ctx, chain, false, 0, ASIC_REG_PLL_PARAM_3, &reg_val, 100) == 0) {
-            // Modify: set specific bits for high-speed UART PLL
-            // Verified pattern from Binary Ninja: enables 400MHz output
-            reg_val = (reg_val & 0xFFFF0000) | 0x0111;  // Set lower bits for PLL config
-            reg_val |= 0xC0700000;                       // Set upper bits for enable
-            bm1398_write_register(ctx, chain, true, 0, ASIC_REG_PLL_PARAM_3, reg_val);
-        } else {
-            // Fallback to known good value if read fails
-            bm1398_write_register(ctx, chain, true, 0, ASIC_REG_PLL_PARAM_3, 0xC0700111);
-        }
+        bm1398_write_register(ctx, chain, true, 0, ASIC_REG_PLL_PARAM_3, 0xC0700111);
         usleep(10000);
 
-        // Step 2: Configure BAUD_CONFIG register (0x28) - Write known-good value
+        // Step 2: Configure BAUD_CONFIG register (0x28) - Use direct write
         printf("    Configuring BAUD_CONFIG (reg 0x28) for high-speed mode...\n");
-        // CRITICAL FIX: Don't use read-modify-write, use known-good value
         bm1398_write_register(ctx, chain, true, 0, ASIC_REG_BAUD_CONFIG, 0x06008F0F);
         usleep(10000);
 
@@ -962,8 +961,8 @@ int bm1398_set_baud_rate(bm1398_context_t *ctx, int chain, uint32_t baud_rate) {
         // Base value: 0xF0000000 (from reset sequence)
         // Add divisor and high-speed bit
         reg_val = 0xF0000000 |                          // Base value from reset
-                  (((baud_div >> 5) & 0xF) << 24) |     // Bits 27-24: upper divisor
-                  ((baud_div & 0x1F) << 8) |            // Bits 12-8: lower divisor
+                  (((baud_div >> 5) & 0xF) << 8) |      // Upper 4 bits of divisor to [11:8]
+                  (baud_div & 0x1F) |                   // Lower 5 bits of divisor to [4:0]
                   0x00010000;                           // Bit 16: high-speed enable
 
         if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg_val) < 0) {
@@ -987,9 +986,9 @@ int bm1398_set_baud_rate(bm1398_context_t *ctx, int chain, uint32_t baud_rate) {
         // CRITICAL FIX: Build CLK_CTRL value from scratch, don't read
         // Base value: 0xF0000400 (from reset sequence with soft reset enabled)
         // Add divisor, ensure high-speed bit is clear
-        reg_val = 0xF0000400 |                          // Base value from reset
-                  (((baud_div >> 5) & 0xF) << 24) |     // Bits 27-24: upper divisor
-                  ((baud_div & 0x1F) << 8);             // Bits 12-8: lower divisor
+        reg_val = 0xF0000400 |                          // Base value from reset with soft reset enabled
+                  (((baud_div >> 5) & 0xF) << 8) |      // Upper 4 bits of divisor to [11:8]
+                  (baud_div & 0x1F);                    // Lower 5 bits of divisor to [4:0]
         // High-speed bit already clear in base value
 
         if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, reg_val) < 0) {
@@ -1266,6 +1265,14 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
         words[i] = __builtin_bswap32(words[i]);
     }
 
+    // Hex dump for debugging
+    printf("  Work Packet Hex Dump (148 bytes):\n");
+    for(int j=0; j<148; j++) {
+        printf("%02x ", ((uint8_t*)&work)[j]);
+        if ((j+1) % 16 == 0) printf("\n");
+    }
+    printf("\n");
+
     // Write work packet to FPGA using INDIRECT MAPPING (FIFO-style)
     // CRITICAL: Matches factory test sub_22B10 @ line 19430
     // First word: logical index 16 (FPGA_REG_TW_WRITE_CMD_FIRST)
@@ -1409,7 +1416,7 @@ static uint8_t g_psu_version = 0;
 /**
  * GPIO helper functions
  */
-static int gpio_write_file(const char *path, const char *value) {
+int gpio_write_file(const char *path, const char *value) {
     int fd = open(path, O_WRONLY);
     if (fd < 0) return -1;
 
@@ -1420,7 +1427,7 @@ static int gpio_write_file(const char *path, const char *value) {
     return (written == len) ? 0 : -1;
 }
 
-static int gpio_setup(int gpio, int value) {
+int gpio_setup(int gpio, int value) {
     char path[64], buf[16];
 
     // Export (ignore if already exported)

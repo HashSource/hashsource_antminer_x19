@@ -49,6 +49,6 @@ When writing code, the code should be concise, pragmatic, maintainable, idiomati
 Once you make your corrections, rebuild the code, and deploy to the HashSource machine and test it.
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/docs/TEST_MACHINES.md
 
-We are using buildroot to build the firmware, use the ARM compiler to compile the code, check the Makefile to understand how to rebuild the code:
+We are using buildroot to build the firmware, use the ARM32 compiler to compile the code, check the Makefile to understand how to rebuild the code:
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/Makefile
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/hashsource_x19/Makefile
