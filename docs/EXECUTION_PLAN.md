@@ -14,7 +14,7 @@ When single_board_test is ran, it assumes the connected hashboard is already rec
 /home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro
 /home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro/BM1398-pattern
 
-Here is the single_board_test PT1 output log:
+Here is the single_board_test PT1 test output log:
 
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/docs/single_board_test_pt1.log
 
@@ -27,7 +27,7 @@ We also have a FPGA register capture during the PT2 test, keep in mind that FPGA
 
 We also have the ida_pro_mcp MCP server available with single_board_test binary loaded and ready for analysis.
 
-Here are also logs from bmminer that may be useful to understand how it works:
+Here are also logs from bmminer that is useful to understand how it works:
 
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/docs/bmminer_s19pro_68_7C_2E_2F_A4_D9.log
 

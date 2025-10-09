@@ -152,22 +152,31 @@ int bm1398_init(bm1398_context_t *ctx) {
     ctx->num_chains = 0;
 
     // Read and verify FPGA boot state
-    // CORRECTED: IDA Pro analysis shows init_fpga writes 0x80808000 (NOT 0x00808000)
-    // Bit 31 (0x80000000) enables FPGA work routing functions
-    // Source: IDA Pro decompilation sub_22B58 @ 0x22b58, logical register 18 -> 0x080
+    // Source: FPGA dump analysis - register 0x080 should toggle during init, then stay at 0x00808000
+    // PT2 FPGA dump shows:
+    //   [3417.203124] INIT 0x080 0x00808000 (boot state)
+    //   [3419.244838] 0x080: 0x00808000 -> 0x80808000 (init_fpga toggle)
+    //   [3419.300471] 0x080: 0x80808000 -> 0x00808000 (return to normal)
     printf("Verifying FPGA boot state...\n");
     uint32_t reg_0x080 = ctx->fpga_regs[0x080 / 4];
     uint32_t reg_0x088 = ctx->fpga_regs[0x088 / 4];
-    printf("  0x080 = 0x%08X (expected: 0x80808000 with bit 31 set)\n", reg_0x080);
+    printf("  0x080 = 0x%08X (boot state, expected: 0x00808000)\n", reg_0x080);
     printf("  0x088 = 0x%08X (expected: 0x00009C40)\n", reg_0x088);
 
-    // Set correct value for 0x080 if wrong
-    if (reg_0x080 != 0x80808000) {
-        printf("  WARNING: 0x080 mismatch, correcting to 0x80808000 (bit 31 set)...\n");
-        ctx->fpga_regs[0x080 / 4] = 0x80808000;
-        __sync_synchronize();
-        usleep(100000);
-    }
+    // Perform init_fpga toggle sequence (matches Bitmain binary)
+    // This is what Bitmain init_fpga does: toggle bit 31, then clear it
+    printf("  Performing init_fpga toggle sequence on 0x080...\n");
+    printf("    Setting 0x080 = 0x80808000 (bit 31 set)...\n");
+    ctx->fpga_regs[0x080 / 4] = 0x80808000;
+    __sync_synchronize();
+    usleep(10000);  // Brief delay
+    printf("    Clearing 0x080 = 0x00808000 (bit 31 clear)...\n");
+    ctx->fpga_regs[0x080 / 4] = 0x00808000;
+    __sync_synchronize();
+    usleep(10000);
+    printf("    Final 0x080 = 0x%08X\n", ctx->fpga_regs[0x080 / 4]);
+
+    // Set correct value for 0x088 if wrong
     if (reg_0x088 != 0x00009C40) {
         printf("  WARNING: 0x088 mismatch, correcting...\n");
         ctx->fpga_regs[0x088 / 4] = 0x00009C40;
@@ -438,6 +447,99 @@ int bm1398_enumerate_chips(bm1398_context_t *ctx, int chain, int num_chips) {
            num_chips, errors);
 
     return errors > 0 ? -1 : 0;
+}
+
+//==============================================================================
+// Hardware Reset Control (FPGA Physical Reset Line)
+//==============================================================================
+
+/**
+ * Set chain reset line LOW (asserted)
+ * Source: IDA Pro sub_1c50f8 @ 0x1c50f8
+ *
+ * Manipulates FPGA register 0x034 (REG_RESET_HASHBOARD_COMMAND)
+ * Sets bit corresponding to chain ID to assert reset
+ */
+void bm1398_chain_reset_low(bm1398_context_t *ctx, int chain) {
+    if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
+        return;
+    }
+
+    // Read current value from FPGA register 0x034
+    // IDA Pro: fpga_read(0xD, &val) where logical 0xD → physical 0x034
+    uint32_t val = fpga_read_indirect(ctx, 13);
+
+    // Set bit for this chain (assert reset)
+    // IDA Pro: fpga_write(0xD, val | (1 << chain_id))
+    val |= (1 << chain);
+
+    fpga_write_indirect(ctx, 13, val);
+}
+
+/**
+ * Set chain reset line HIGH (de-asserted)
+ * Source: IDA Pro sub_1c5128 @ 0x1c5128
+ *
+ * Clears bit corresponding to chain ID to release reset
+ */
+void bm1398_chain_reset_high(bm1398_context_t *ctx, int chain) {
+    if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
+        return;
+    }
+
+    // Read current value from FPGA register 0x034
+    uint32_t val = fpga_read_indirect(ctx, 13);
+
+    // Clear bit for this chain (release reset)
+    // IDA Pro: fpga_write(0xD, val & ~(1 << chain_id))
+    val &= ~(1 << chain);
+
+    fpga_write_indirect(ctx, 13, val);
+}
+
+/**
+ * Perform hardware reset sequence on chain
+ * Source: IDA Pro Single_Board_PT2_Software_Pattern_Test lines 331-340
+ *
+ * This is the PHYSICAL reset toggle sequence via FPGA, completely
+ * separate from ASIC register configuration. Must be done BEFORE
+ * any UART communication with ASICs.
+ *
+ * Timing verified from Bitmain single_board_test debug binary:
+ *   700ms initial delay
+ *   Reset LOW → 10ms → HIGH → 72ms → LOW → 10ms → HIGH → 10ms
+ */
+int bm1398_hardware_reset_chain(bm1398_context_t *ctx, int chain) {
+    if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
+        return -1;
+    }
+
+    printf("Performing FPGA hardware reset sequence on chain %d...\n", chain);
+
+    // Initial delay before reset sequence
+    printf("  Initial delay (700ms)...\n");
+    usleep(700000);  // 700ms (0xAAE60)
+
+    // First reset pulse: LOW → HIGH
+    printf("  Reset LOW...\n");
+    bm1398_chain_reset_low(ctx, chain);
+    usleep(10000);   // 10ms (0x2710)
+
+    printf("  Reset HIGH...\n");
+    bm1398_chain_reset_high(ctx, chain);
+    usleep(72000);   // 72ms (0x11940 from elf_hash_chain[4414])
+
+    // Second reset pulse: LOW → HIGH
+    printf("  Reset LOW...\n");
+    bm1398_chain_reset_low(ctx, chain);
+    usleep(10000);   // 10ms
+
+    printf("  Reset HIGH...\n");
+    bm1398_chain_reset_high(ctx, chain);
+    usleep(10000);   // 10ms final settle
+
+    printf("  Hardware reset sequence complete\n");
+    return 0;
 }
 
 //==============================================================================
@@ -879,7 +981,7 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
 }
 
 /**
- * Complete chain initialization (both stages)
+ * Complete chain initialization (hardware reset + both config stages)
  */
 int bm1398_init_chain(bm1398_context_t *ctx, int chain) {
     if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
@@ -890,7 +992,15 @@ int bm1398_init_chain(bm1398_context_t *ctx, int chain) {
     printf("Initializing Chain %d\n", chain);
     printf("====================================\n\n");
 
-    // Stage 1: Hardware reset
+    // Step 0: FPGA hardware reset (physical reset line toggle)
+    // This MUST be done BEFORE any ASIC communication!
+    // Source: IDA Pro PT2 test lines 331-340
+    if (bm1398_hardware_reset_chain(ctx, chain) < 0) {
+        fprintf(stderr, "Error: Hardware reset failed\n");
+        return -1;
+    }
+
+    // Stage 1: Software reset (ASIC registers)
     if (bm1398_reset_chain_stage1(ctx, chain) < 0) {
         fprintf(stderr, "Error: Stage 1 failed\n");
         return -1;
@@ -1153,21 +1263,16 @@ int bm1398_enable_work_send(bm1398_context_t *ctx) {
         return -1;
     }
 
-    // Verify/set register 0x080 work routing config
-    // This register MUST have bit 31 set (0x80808000) to route work to ASICs!
-    // If bit 31 is clear, work goes into FPGA but never reaches ASICs
+    // Verify register 0x080 work routing config (informational only)
+    // FPGA dump shows this register should be 0x00808000 (bit 31 CLEAR) during normal operation
+    // The toggle to 0x80808000 happens only during initialization, then returns to 0x00808000
     uint32_t reg_0x080 = ctx->fpga_regs[0x080 / 4];
-    printf("  Verifying FPGA work routing (reg 0x080)...\n");
-    printf("    Register 0x080 before: 0x%08X\n", reg_0x080);
-    if ((reg_0x080 & 0x80000000) == 0) {
-        printf("    WARNING: Bit 31 NOT set - work routing DISABLED!\n");
-        printf("    Setting 0x080 = 0x80808000 to enable work routing...\n");
-        ctx->fpga_regs[0x080 / 4] = 0x80808000;
-        __sync_synchronize();
-        usleep(10000);
-        printf("    Register 0x080 after:  0x%08X\n", ctx->fpga_regs[0x080 / 4]);
+    printf("  Checking FPGA work routing (reg 0x080)...\n");
+    printf("    Register 0x080: 0x%08X (expected: 0x00808000 after init)\n", reg_0x080);
+    if (reg_0x080 != 0x00808000) {
+        printf("    WARNING: Unexpected value, expected 0x00808000\n");
     } else {
-        printf("    OK: Work routing enabled (bit 31 set)\n");
+        printf("    OK: Register 0x080 at correct value\n");
     }
 
     // Disable auto-pattern generation (clear bit 14 of register 35)
@@ -1205,6 +1310,32 @@ int bm1398_start_work_gen(bm1398_context_t *ctx) {
     // and the initialization sequence. No additional start is needed.
 
     printf("  Work generation control (no-op, already enabled)\n");
+    return 0;
+}
+
+/**
+ * Set ticket mask for chain (controls which cores are enabled)
+ * Source: IDA Pro set_chain_ticketmask
+ *
+ * Common values from Bitmain PT2 test:
+ *   0xFFFFFFFF - All cores (initialization)
+ *   0xFFFF     - 65535 (super software pattern test)
+ *   0x7F       - 127 (regular software pattern test)
+ */
+int bm1398_set_ticket_mask(bm1398_context_t *ctx, int chain, uint32_t mask) {
+    if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
+        return -1;
+    }
+
+    printf("Setting ticket mask = 0x%08X for chain %d...\n", mask, chain);
+
+    // Write to ASIC register 0x14 (ASIC_REG_TICKET_MASK) via broadcast
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_TICKET_MASK, mask) < 0) {
+        fprintf(stderr, "Error: Failed to set ticket mask\n");
+        return -1;
+    }
+
+    usleep(50000);  // 50ms settle time
     return 0;
 }
 

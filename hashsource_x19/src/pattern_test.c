@@ -275,6 +275,20 @@ int main(int argc, char *argv[]) {
     }
     printf("\n");
 
+    // Set ticket mask for pattern testing
+    // PT2 test uses 0xFFFF for super software pattern mode
+    // Source: IDA Pro PT2 test lines 609-652
+    printf("====================================\n");
+    printf("Configuring Ticket Mask for Pattern Test\n");
+    printf("====================================\n");
+    if (bm1398_set_ticket_mask(&ctx, chain, 0xFFFF) < 0) {
+        fprintf(stderr, "Error: Failed to set ticket mask\n");
+        bm1398_cleanup(&ctx);
+        free(works);
+        return 1;
+    }
+    printf("\n");
+
     // Send test patterns
     printf("====================================\n");
     printf("Sending Test Patterns\n");

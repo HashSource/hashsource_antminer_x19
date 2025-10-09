@@ -29,7 +29,7 @@
  * ============================================================================ */
 
 /* Debug logging */
-#define LCD_DEBUG 1
+#define LCD_DEBUG 0
 #define PATH_DEBUG 0
 
 /* Virtual file descriptors */

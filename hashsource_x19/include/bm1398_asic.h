@@ -184,6 +184,11 @@ int bm1398_chain_inactive(bm1398_context_t *ctx, int chain);
 int bm1398_set_chip_address(bm1398_context_t *ctx, int chain, uint8_t addr);
 int bm1398_enumerate_chips(bm1398_context_t *ctx, int chain, int num_chips);
 
+// Hardware reset control (FPGA register 0x034)
+void bm1398_chain_reset_low(bm1398_context_t *ctx, int chain);
+void bm1398_chain_reset_high(bm1398_context_t *ctx, int chain);
+int bm1398_hardware_reset_chain(bm1398_context_t *ctx, int chain);
+
 // Register operations
 int bm1398_write_register(bm1398_context_t *ctx, int chain, bool broadcast,
                           uint8_t chip_addr, uint8_t reg_addr, uint32_t value);
@@ -208,6 +213,7 @@ int bm1398_set_frequency(bm1398_context_t *ctx, int chain, uint32_t freq_mhz);
 int bm1398_enable_work_send(bm1398_context_t *ctx);
 int bm1398_start_work_gen(bm1398_context_t *ctx);
 int bm1398_check_work_fifo_ready(bm1398_context_t *ctx, int chain);
+int bm1398_set_ticket_mask(bm1398_context_t *ctx, int chain, uint32_t mask);
 int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
                     const uint8_t *work_data_12bytes,
                     const uint8_t midstates[4][32]);
