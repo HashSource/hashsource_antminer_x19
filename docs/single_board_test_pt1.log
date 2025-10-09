@@ -149,5 +149,3 @@ PT1_display_result_on_LCD : ASIC:   OK
 PT1_display_result_on_LCD : EEPROM: OK
 
 PT1_display_result_on_LCD : PIC sensor: OK
-
-^C
