@@ -20,11 +20,11 @@ parse_local_config_file : Test_Process : PT2
 parse_local_config_file : Miner_Type : S19_Pro
 parse_local_config_file : Board_Name : NBP1901-38
 parse_local_config_file : Asic_Type : BM1398
-parse_local_config_file : Asic_Num : 1
+parse_local_config_file : Asic_Num : 2
 parse_local_config_file : Voltage_Domain : 38
 parse_local_config_file : Asic_Num_Per_Voltage_Domain : 3
 parse_local_config_file : Read_Temperature_From_Pic : true
-parse_local_config_file : Read_Temperature_From_Asic : false
+parse_local_config_file : Read_Temperature_From_Asic : true
 parse_local_config_file : Pic_Sensor_Model : LM75A
 parse_local_config_file : gPic_sensor_num : 4
 parse_local_config_file : gPic_sensor_low_3_bits_addr[0] : 0
@@ -80,124 +80,16 @@ parse_local_config_file : Max_Wait_Cooling_Down_Time : 90
 parse_local_config_file : Time_For_Cooling_Hashboard : 0
 parse_local_config_file : Fan_Speed : 100
 parse_local_config_file : Display_result_Voltage_Domain : true
-parse_local_config_file : Display_result_Every_Core : false
+parse_local_config_file : Display_result_Every_Core : true
 parse_local_config_file : Test_Config_Data_Version : 0
 parse_local_config_file : Voltage_Accuracy : 50
 parse_local_config_file : Close_Power_Delay : 0
 parse_local_config_file : Clear_EEPROM_Data : false
 get_works_ex : pattern file path: /mnt/card/BM1398-pattern/btc-asic-%03d.bin
-get_works_ex : asic_num = 1, core_num = 623, pattern_num = 8
+get_works_ex : asic_num = 2, core_num = 623, pattern_num = 8
 prepare_pattern : read pattern file done
-display_main_page : Single ASIC pattern test
-prepare_test_process : You are in single Asic Manual PT2 test mode, please make sure all the configrations are correct!
-Single_Board_PT2_Test : Start Single_Board_PT2_Test, gPattern_test_counter = 0
-init_fpga : Set midstate as 4
-Single_Board_PT2_Test : Set fan speed as 100
-reset_global_variables :
-check_chain :
-check_chain : info.board_num = 1
-check_chain : gChain = 0
-Single_Board_PT2_Test : Set Chain 0 baud: 26
-root@HashSource:~/test_fixture# ./run_debug.sh
-Starting FPGA register logger...
-Logger PID: 1098
-Logs: /tmp/fpga_registers.log
-
-Starting test...
-
-
-================================================================================
-  TEST FIXTURE SHIM v3.0 - LD_PRELOAD Wrapper Loaded
-================================================================================
-  LCD Emulation:    /dev/bitmain-lcd -> virtual
-  GPIO Emulation:   gpio943 (start button) -> auto-pressed
-  Path Rewrite:     /mnt/card -> /root/test_fixture
-
-================================================================================
-
-main : build version information::  version: 9d1c2687fb8abf2f470e9946e65d73b407dcb455 commit: 2020-05-07 17:00:10 build: 2020-05-08 11:11:35.
-
-main : author information::  author: zhiqiang.liu      email: zhiqiang.liu@bitmain.com.
-
-
-prepare_platform_environment :
-save_software_commit_id : software_commit_id: 9d1c2687fb8abf2f470e9946e65d73b407dcb455
-prepare_local_config_information :
-malloc_for_local_config_information : malloc for local config information success
-parse_local_config_file : Test_Process : PT2
-parse_local_config_file : Miner_Type : S19_Pro
-parse_local_config_file : Board_Name : NBP1901-38
-parse_local_config_file : Asic_Type : BM1398
-parse_local_config_file : Asic_Num : 1
-parse_local_config_file : Voltage_Domain : 38
-parse_local_config_file : Asic_Num_Per_Voltage_Domain : 3
-parse_local_config_file : Read_Temperature_From_Pic : true
-parse_local_config_file : Read_Temperature_From_Asic : false
-parse_local_config_file : Pic_Sensor_Model : LM75A
-parse_local_config_file : gPic_sensor_num : 4
-parse_local_config_file : gPic_sensor_low_3_bits_addr[0] : 0
-parse_local_config_file : gPic_sensor_low_3_bits_addr[1] : 1
-parse_local_config_file : gPic_sensor_low_3_bits_addr[2] : 2
-parse_local_config_file : gPic_sensor_low_3_bits_addr[3] : 3
-parse_local_config_file : Asic_Sensor_Model : NCT218
-parse_local_config_file : gAsic_sensor_num : 4
-parse_local_config_file : gAsic_sensor_addr[0] : 25
-parse_local_config_file : gAsic_sensor_addr[1] : 57
-parse_local_config_file : gAsic_sensor_addr[2] : 58
-parse_local_config_file : gAsic_sensor_addr[3] : 90
-parse_local_config_file : Can support 3 apw power type
-parse_local_config_file : APW_power_version[0] = 66
-parse_local_config_file : APW_power_version[1] = 67
-parse_local_config_file : APW_power_version[2] = 113
-parse_local_config_file : Factory_Mode : false
-parse_local_config_file : Bypass_Scan_Code_Gun : true
-parse_local_config_file : Software_Pattern : true
-parse_local_config_file : Hardware_Pattern : false
-parse_local_config_file : Autogen_Pattern : false
-parse_local_config_file : Midstate_Number : 4
-parse_local_config_file : Pattern_Number : 8
-parse_local_config_file : Invalid_Core_Number : 77
-parse_local_config_file : Least_Nonce_Per_Core : 6
-parse_local_config_file : Nonce_Rate : 9950
-parse_local_config_file : Most_HW_Num : 128
-parse_local_config_file : In local config file, gTest_loop : 3
-parse_local_config_file : Test_Loop[0]->Level : 1
-parse_local_config_file : Test_Loop[0]->Pre_Open_Core_Voltage : 1500
-parse_local_config_file : Test_Loop[0]->Voltage : 1360
-parse_local_config_file : Test_Loop[0]->Frequence : 525
-parse_local_config_file : Test_Loop[1]->Level : 2
-parse_local_config_file : Test_Loop[1]->Pre_Open_Core_Voltage : 1500
-parse_local_config_file : Test_Loop[1]->Voltage : 1340
-parse_local_config_file : Test_Loop[1]->Frequence : 525
-parse_local_config_file : Test_Loop[2]->Level : 3
-parse_local_config_file : Test_Loop[2]->Pre_Open_Core_Voltage : 1500
-parse_local_config_file : Test_Loop[2]->Voltage : 1320
-parse_local_config_file : Test_Loop[2]->Frequence : 525
-parse_local_config_file : Baudrate : 12000000
-parse_local_config_file : Timeout : 150
-parse_local_config_file : CCdly_Sel : 1
-parse_local_config_file : Pwth_Sel : 1
-parse_local_config_file : Swpf_Mode : 0
-parse_local_config_file : Pulse_Mode : 1
-parse_local_config_file : Clk_Sel : 0
-parse_local_config_file : RO_Relay_En : 1
-parse_local_config_file : CO_Relay_En : 1
-parse_local_config_file : Diode_Vdd_Mux_Sel : 3
-parse_local_config_file : Start_Temp_Gap_Pic : 7
-parse_local_config_file : Max_Wait_Cooling_Down_Time : 90
-parse_local_config_file : Time_For_Cooling_Hashboard : 0
-parse_local_config_file : Fan_Speed : 100
-parse_local_config_file : Display_result_Voltage_Domain : true
-parse_local_config_file : Display_result_Every_Core : false
-parse_local_config_file : Test_Config_Data_Version : 0
-parse_local_config_file : Voltage_Accuracy : 50
-parse_local_config_file : Close_Power_Delay : 0
-parse_local_config_file : Clear_EEPROM_Data : false
-get_works_ex : pattern file path: /mnt/card/BM1398-pattern/btc-asic-%03d.bin
-get_works_ex : asic_num = 1, core_num = 623, pattern_num = 8
-prepare_pattern : read pattern file done
-display_main_page : Single ASIC pattern test
-prepare_test_process : You are in single Asic Manual PT2 test mode, please make sure all the configrations are correct!
+display_main_page : Manual Mode:PT2, must use scan code gun
+prepare_test_process : You are in Manual PT2 test mode, please make sure all the configrations are correct!
 Single_Board_PT2_Test : Start Single_Board_PT2_Test, gPattern_test_counter = 0
 init_fpga : Set midstate as 4
 Single_Board_PT2_Test : Set fan speed as 100
@@ -230,13 +122,13 @@ init_pic : PIC version: 0x89
 init_pic : Creat pic heart beat function ok
 pic_heart_beat_func : pic_heart_beat_func
 read_temperature_from_PIC : Start read_temperature_from_PIC
-read_temperature_from_PIC : Read from Pic ::    Sensor 0:      local: 23
-read_temperature_from_PIC : Read from Pic ::    Sensor 1:      local: 23
-read_temperature_from_PIC : Read from Pic ::    Sensor 2:      local: 23
-read_temperature_from_PIC : Read from Pic ::    Sensor 3:      local: 23
+read_temperature_from_PIC : Read from Pic ::    Sensor 0:      local: 19
+read_temperature_from_PIC : Read from Pic ::    Sensor 1:      local: 19
+read_temperature_from_PIC : Read from Pic ::    Sensor 2:      local: 19
+read_temperature_from_PIC : Read from Pic ::    Sensor 3:      local: 19
 wait_for_cool_down : Waiting for Hashboard cool down for 1 seconds ...
-get_highest_PIC_temperature : Highest PIC Temperature is: 23
-get_lowest_PIC_temperature : Lowest PIC Temperature is: 23
+get_highest_PIC_temperature : Highest PIC Temperature is: 19
+get_lowest_PIC_temperature : Lowest PIC Temperature is: 19
 wait_for_cool_down : Hashboard cool down, begin test ...
 pic_power_on_hashboard : PIC power on ok
 PT2_show_status_func : time = 20
@@ -246,9 +138,6 @@ set_asic_register_stage_1 : Software reset core done
 set_asic_register_stage_1 : set TM to 0xffffffff
 get_register_value : asic_name: 0x1398
 receive_function : BTC start receive_function
-BTC_check_register : receive register value from chain: 4, but not gChain: 0
-BTC_check_register : receive register value from chain: 4, but not gChain: 0
-BTC_check_register : receive register value from chain: 4, but not gChain: 0
 get_register_value : asic_name: 0x1398
 receive_function : BTC receive_function stop
 PT2_show_status_func : PT2_show_status_func stop

@@ -1,10 +1,8 @@
-Read these documents:
+We are building Firmware for Bitmain Antminer S19 Pro, XILINX Platform. Our goal is to replicate stock firmware, before adding custom functionality.
 
-/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/docs/BM1398_PROTOCOL.md
+The binaries we are working with are stripped without debug symbols, so using the logs provided below will help you understand the functions.
 
-/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/docs/PATTERN_TEST.md
-
-Here is the bmminer binary, with Ghidra, and IDA Pro decompilations and assembly files.
+Here is the bmminer binary, with Ghidra, and IDA Pro C,H, and ASM files.
 
 /home/danielsokil/Downloads/Bitmain_Peek/S19_Pro/Antminer-S19-Pro-merge-release-20221226124238/Antminer S19 Pro/zynq7007_NBP1901/update/minerfs.no_header.image_extract/\_ghidra/bins/bmminer-2f464d0989b763718a6fbbdee35424ae
 
@@ -14,12 +12,20 @@ Here is also single_board_test, the Bitmain test fixture tool used to test a has
 When single_board_test is ran, it assumes the connected hashboard is already receiving power, however in our case we need to power on the PSU as bmminer does, and then power off once done testing.
 
 /home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro
+/home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro/BM1398-pattern
 
-Here is the single_board_test output saved in a log:
+Here is the single_board_test PT1 output log:
 
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/docs/single_board_test_pt1.log
 
-We also have the binary_ninja_mcp MCP server available with single_board_test and bmminer binaries loaded and ready for analysis.
+And the PT2 test output log:
+/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/docs/single_board_test_pt2.log
+
+We also have a FPGA register capture during the PT2 test, keep in mind that FPGA logger starts before single_board_test, so it may capture the state of registers before the Bitmain binary writes to them.
+
+/home/danielsokil/Lab/HashSource/hashsource_antminer_x19/docs/single_board_test_pt2_fpga_dump.log
+
+We also have the ida_pro_mcp MCP server available with single_board_test binary loaded and ready for analysis.
 
 Here are also logs from bmminer that may be useful to understand how it works:
 
@@ -36,12 +42,14 @@ We are reimplementing bmminer and single_board_test, here is our current source 
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/hashsource_x19/src/pattern_test.c
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/hashsource_x19/src/work_test.c
 
+The pattern_test program needs to perform a PT2 test exactly how single_board_test functions, the other sources files are simply to support pattern_test.
+
 The goal is to get at least one hashboard hashing, chain 0, use the docs we have and the Bitmain binaries to achieve that goal.
 
-I need you to analyze our correct source code, and figure out what details we are missing, compared to the Bitmain binaries.
+I need you to analyze our current source code, and figure out what details we are missing, compared to the Bitmain binaries.
 You also need to verify every detail, FPGA registers, initialization code, work generation, pattern testing code compared to BM1398_PROTOCOL doc, PATTERN_TEST doc, and bmminer, single_board_test binaries.
 
-These programs have been verified to be working, use them as reference to understand fan and PSU controls.
+These HashSource programs have been verified to be working, use them as reference to understand fan and PSU controls.
 Verify in our pattern test program and work submission that the PSU is enabled and powered on properly, otherwise the hashboard and ASICs won't respond.
 
 /home/danielsokil/Lab/HashSource/hashsource_antminer_x19/hashsource_x19/src/fan_test.c

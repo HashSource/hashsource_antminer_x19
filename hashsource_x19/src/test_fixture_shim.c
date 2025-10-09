@@ -29,7 +29,7 @@
  * ============================================================================ */
 
 /* Debug logging */
-#define LCD_DEBUG 0
+#define LCD_DEBUG 1
 #define PATH_DEBUG 0
 
 /* Virtual file descriptors */
@@ -362,7 +362,7 @@ __attribute__((constructor))
 static void shim_init(void) {
     fprintf(stderr, "\n");
     fprintf(stderr, "================================================================================\n");
-    fprintf(stderr, "  TEST FIXTURE SHIM v3.0 - LD_PRELOAD Wrapper Loaded\n");
+    fprintf(stderr, "  TEST FIXTURE SHIM - LD_PRELOAD Wrapper Loaded\n");
     fprintf(stderr, "================================================================================\n");
     fprintf(stderr, "  LCD Emulation:    /dev/bitmain-lcd -> virtual\n");
     fprintf(stderr, "  GPIO Emulation:   gpio943 (start button) -> auto-pressed\n");

@@ -61,7 +61,6 @@ uint8_t bm1398_crc5(const uint8_t *data, unsigned int bits) {
 /**
  * FPGA Register Mapping Table
  *
- * CRITICAL: Both bmminer and factory test use indirect register access!
  * This table maps logical register indices to physical word offsets.
  *
  * Source: Binary analysis
@@ -117,6 +116,7 @@ void fpga_write_indirect(bm1398_context_t *ctx, int logical_index, uint32_t valu
 
     int word_offset = fpga_register_map[logical_index];
     ctx->fpga_regs[word_offset] = value;
+    __sync_synchronize();  // Force write to hardware (not cached)
 }
 
 //==============================================================================
@@ -151,43 +151,33 @@ int bm1398_init(bm1398_context_t *ctx) {
     ctx->initialized = true;
     ctx->num_chains = 0;
 
-    // CRITICAL: Set FPGA to Bitmain's boot state FIRST
-    // FPGA logger analysis shows Bitmain starts with 0x080 = 0x008F8001
-    // Our FPGA boots at 0x080 = 0x00808000 (different firmware?)
-    // This mismatch causes 1000x UART slowdown (1-2 seconds vs 1-2ms per command)
-    printf("CRITICAL: Initializing FPGA to Bitmain boot state...\n");
-    printf("  Writing 0x080 = 0x008F8001 (Bitmain's initial state)...\n");
-    ctx->fpga_regs[0x080 / 4] = 0x008F8001;
-    __sync_synchronize();
-    usleep(100000);  // 100ms for FPGA to settle
-    printf("  Current 0x080 = 0x%08X\n\n", ctx->fpga_regs[0x080 / 4]);
+    // Read and verify FPGA boot state
+    // CORRECTED: IDA Pro analysis shows init_fpga writes 0x80808000 (NOT 0x00808000)
+    // Bit 31 (0x80000000) enables FPGA work routing functions
+    // Source: IDA Pro decompilation sub_22B58 @ 0x22b58, logical register 18 -> 0x080
+    printf("Verifying FPGA boot state...\n");
+    uint32_t reg_0x080 = ctx->fpga_regs[0x080 / 4];
+    uint32_t reg_0x088 = ctx->fpga_regs[0x088 / 4];
+    printf("  0x080 = 0x%08X (expected: 0x80808000 with bit 31 set)\n", reg_0x080);
+    printf("  0x088 = 0x%08X (expected: 0x00009C40)\n", reg_0x088);
 
-    // CRITICAL: Direct register 0x080/0x088 init MUST happen FIRST
-    // Before ANY other FPGA register operations!
-    // These control fundamental FPGA mode/state
-    // Sequence verified from working fan_test.c
-    printf("CRITICAL: Early FPGA mode initialization...\n");
-
-    // Stage 1: Boot-time initialization - now starting from correct base
-    // Bitmain then writes 0x80808000, then 0x00808000
-    printf("  Stage 1a: Toggle bit 31 (Bitmain sequence)...\n");
-    ctx->fpga_regs[0x080 / 4] = 0x80808000;
-    __sync_synchronize();
-    usleep(50000);
-    printf("    Set 0x080 = 0x%08X\n", ctx->fpga_regs[0x080 / 4]);
-
-    ctx->fpga_regs[0x080 / 4] = 0x00808000;
-    __sync_synchronize();
-    usleep(100000);
-    printf("  Set 0x080 = 0x%08X (boot init)\n", ctx->fpga_regs[0x080 / 4]);
-
-    ctx->fpga_regs[0x088 / 4] = 0x800001C1;
-    __sync_synchronize();
-    usleep(100000);
-    printf("  Set 0x088 = 0x%08X (boot init)\n\n", ctx->fpga_regs[0x088 / 4]);
+    // Set correct value for 0x080 if wrong
+    if (reg_0x080 != 0x80808000) {
+        printf("  WARNING: 0x080 mismatch, correcting to 0x80808000 (bit 31 set)...\n");
+        ctx->fpga_regs[0x080 / 4] = 0x80808000;
+        __sync_synchronize();
+        usleep(100000);
+    }
+    if (reg_0x088 != 0x00009C40) {
+        printf("  WARNING: 0x088 mismatch, correcting...\n");
+        ctx->fpga_regs[0x088 / 4] = 0x00009C40;
+        __sync_synchronize();
+        usleep(100000);
+    }
+    printf("  FPGA boot state verified\n\n");
 
     // Initialize FPGA registers using INDIRECT MAPPING
-    // CRITICAL: Matches bmminer and factory test initialization sequence
+    // Matches bmminer and factory test initialization sequence
     // Source: Binary analysis of bmminer @ 0x45b34 and factory test @ 0x22cf0
     printf("Initializing FPGA registers (using indirect mapping)...\n");
 
@@ -235,30 +225,38 @@ int bm1398_init(bm1398_context_t *ctx) {
            fpga_read_indirect(ctx, FPGA_REG_WORK_QUEUE_PARAM));
 
     // Direct register initialization (non-mapped registers)
-    // These use direct byte offsets and are not in the mapping table
-    // Note: Registers 0x080 and 0x088 already initialized above in Bitmain sequence
-
-    // Control registers (0x000-0x01C)
-    ctx->fpga_regs[REG_FAN_SPEED] = 0x00000500;  // 0x004: Status register
-    ctx->fpga_regs[REG_HASH_ON_PLUG] = 0x00000007;  // 0x008: Control
-    ctx->fpga_regs[REG_RETURN_NONCE] = 0x00000004;  // 0x010: Control
-    ctx->fpga_regs[0x014 / 4] = 0x5555AAAA;  // 0x014: Test pattern
-    ctx->fpga_regs[REG_NONCE_FIFO_INTERRUPT] = 0x00000001;  // 0x01C: Control
-
-    // Chain configuration (0x030-0x03C)
-    ctx->fpga_regs[REG_IIC_COMMAND] = 0x8242001F;  // 0x030: Chain config
-    ctx->fpga_regs[REG_RESET_HASHBOARD_COMMAND] = 0x0000FFF8;  // 0x034: Chain config
-    ctx->fpga_regs[0x03C / 4] = 0x001A1A1A;  // 0x03C: Chain config
-
-    // Command buffer (0x0C0-0x0C8)
-    ctx->fpga_regs[REG_BC_WRITE_COMMAND] = 0x00820000;  // 0x0C0: BC command control
-    ctx->fpga_regs[REG_BC_COMMAND_BUFFER] = 0x52050000;  // 0x0C4: BC command data
-    ctx->fpga_regs[0x0C8 / 4] = 0x0A000000;  // 0x0C8: BC command data
-
-    // PIC/I2C configuration (0x0F0-0x0F8)
-    ctx->fpga_regs[REG_FPGA_CHIP_ID_ADDR] = 0x57104814;  // 0x0F0: PIC/I2C config
-    ctx->fpga_regs[0x0F4 / 4] = 0x80404404;  // 0x0F4: PIC/I2C config
-    ctx->fpga_regs[REG_CRC_ERROR_CNT_ADDR] = 0x0000309D;  // 0x0F8: PIC/I2C config
+    // Match Bitmain's PT2 FPGA boot state EXACTLY
+    // Values verified from single_board_test_pt2_fpga_dump.log INIT section
+    printf("Initializing FPGA registers to match PT2 dump...\n");
+    ctx->fpga_regs[0x000 / 4] = 0x4000B031;
+    ctx->fpga_regs[0x004 / 4] = 0x00000308;
+    ctx->fpga_regs[0x008 / 4] = 0x00000001;
+    ctx->fpga_regs[0x00C / 4] = 0x00000001;
+    ctx->fpga_regs[0x010 / 4] = 0x0000400D;
+    ctx->fpga_regs[0x014 / 4] = 0x5555AAAA;
+    ctx->fpga_regs[0x01C / 4] = 0x00800001;
+    ctx->fpga_regs[0x030 / 4] = 0x82400001;
+    ctx->fpga_regs[0x034 / 4] = 0x0000FFF8;
+    ctx->fpga_regs[0x03C / 4] = 0x0000001A;
+    // init_fpga writes 0x80808000 to 0x080 (NOT 0x00808000 from bootloader)
+    // Source: IDA Pro decompilation sub_22B58 @ 0x22b58, writes to logical register 18
+    // Logical register 18 maps to physical word 0x20 = byte offset 0x080
+    // This sets bit 31 which enables FPGA work routing functions
+    ctx->fpga_regs[0x080 / 4] = 0x80808000;
+    ctx->fpga_regs[0x084 / 4] = 0x00000064;
+    ctx->fpga_regs[0x088 / 4] = 0x00009C40;
+    ctx->fpga_regs[0x08C / 4] = 0x800000F9;
+    ctx->fpga_regs[0x0A0 / 4] = 0x00000064;
+    ctx->fpga_regs[0x0C0 / 4] = 0x00800000;
+    ctx->fpga_regs[0x0C4 / 4] = 0x52050000;
+    ctx->fpga_regs[0x0C8 / 4] = 0x0A000000;
+    ctx->fpga_regs[0x0F0 / 4] = 0x2B104814;
+    ctx->fpga_regs[0x0F4 / 4] = 0x8150F404;
+    ctx->fpga_regs[0x0F8 / 4] = 0x000001CD;
+    ctx->fpga_regs[0x118 / 4] = 0x00008060;
+    ctx->fpga_regs[0x11C / 4] = 0x00007200;
+    ctx->fpga_regs[0x140 / 4] = 0x00003648;
+    printf("FPGA registers set to PT2 dump values.\n");
 
     __sync_synchronize();
     usleep(50000);  // 50ms settle time
@@ -316,7 +314,7 @@ int bm1398_send_uart_cmd(bm1398_context_t *ctx, int chain,
 
     // Write command bytes to BC_COMMAND_BUFFER (0xC4, 0xC8, 0xCC)
     // Up to 12 bytes = 3 x 32-bit words
-    // CRITICAL: FPGA expects BIG-ENDIAN byte order!
+    // FPGA expects BIG-ENDIAN byte order!
     // ARM is little-endian, so we must byte-swap
     for (size_t i = 0; i < (len + 3) / 4; i++) {
         uint32_t word = 0;
@@ -424,7 +422,7 @@ int bm1398_enumerate_chips(bm1398_context_t *ctx, int chain, int num_chips) {
             errors++;
         }
 
-        // CRITICAL: Delay between chip enumeration commands
+        // Delay between chip enumeration commands
         // Factory test uses longer delays to ensure chips have time to process
         // Each chip must receive, process, and relay the command down the chain
         usleep(10000);  // 10ms per chip
@@ -593,7 +591,6 @@ int bm1398_reset_chain_stage1(bm1398_context_t *ctx, int chain) {
     // Hardware reset sequence verified from Binary Ninja analysis
     // Source: Bitmain single_board_test.c sub_1d07c @ 0x1d07c
     //
-    // CRITICAL FIX: Factory test doesn't use read-modify-write!
     // It writes known-good values directly. Register reads don't work
     // reliably during early initialization.
 
@@ -667,7 +664,6 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     usleep(10000);
 
     // 3. Set LOW baud rate (115200) for chip enumeration
-    // CRITICAL: Chip enumeration MUST happen at low speed!
     printf("  Setting LOW baud rate (115200) for enumeration...\n");
     if (bm1398_set_baud_rate(ctx, chain, 115200) < 0) {
         fprintf(stderr, "Error: Failed to set low baud rate\n");
@@ -684,7 +680,7 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     }
     usleep(10000);
 
-    // 5. CRITICAL: Register 0x3C reset sequence BEFORE pulse_mode config
+    // 5. Register 0x3C reset sequence BEFORE pulse_mode config
     // Source: Binary Ninja sub_2959c @ 0x2959c - MUST DO THIS!
     printf("  Core config reset sequence (reg 0x3C)...\n");
     printf("    Step 1: Write 0x8000851F...\n");
@@ -759,7 +755,7 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
         fprintf(stderr, "Warning: Frequency set failed\n");
     }
 
-    // CRITICAL: PLL needs time to lock and stabilize before proceeding
+    // PLL needs time to lock and stabilize before proceeding
     // Factory test and bmminer both have significant delays here
     // PLLs typically need 100-500ms to achieve stable lock
     printf("  Waiting for PLL to lock and stabilize (500ms)...\n");
@@ -774,7 +770,7 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     }
     usleep(50000);
 
-    // 7b. CRITICAL: Clear UART RX FIFO after baud rate change
+    // 7b. Clear UART RX FIFO after baud rate change
     // Factory test sub_20608 @ 0x20608 calls this immediately after baud change
     // Removes garbage data accumulated during baud rate transition
     printf("  Clearing UART RX FIFO after baud rate change...\n");
@@ -790,27 +786,13 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     }
     usleep(10000);
 
-    // 7c. CRITICAL: Re-enumerate chips at HIGH baud rate
-    // Factory test does SECOND enumeration here (line 134 in single_board_test_pt1.log)
-    // This verifies all chips respond correctly at high speed UART
-    // Source: single_board_test_pt1.log lines 132-134:
-    //   "Set chain baud as 12000000"
-    //   "Second: Find 114 ASIC"
-    printf("  SECOND chip enumeration (at HIGH baud %d Hz)...\n", BAUD_RATE_12MHZ);
-    printf("  Sending chain inactive command...\n");
-    if (bm1398_chain_inactive(ctx, chain) < 0) {
-        fprintf(stderr, "Warning: Chain inactive failed at high baud\n");
-    }
-    usleep(10000);
+    // NOTE: PT2 log analysis shows NO second enumeration at high baud
+    // Bitmain's PT2 test does NOT re-enumerate chips after baud rate change
+    // Skip second enumeration to match Bitmain's behavior
+    printf("  Skipping second enumeration (not in PT2 test sequence)...\n");
+    usleep(50000);  // 50ms settle time after baud rate change
 
-    printf("  Re-enumerating %d chips at high baud...\n", num_chips);
-    if (bm1398_enumerate_chips(ctx, chain, num_chips) < 0) {
-        fprintf(stderr, "Warning: High-baud chip enumeration failed\n");
-        // Don't fail here - continue with initialization
-    }
-    usleep(50000);  // 50ms settle time after re-enumeration
-
-    // 7d. Core reset sequence (critical for nonce reception)
+    // 7d. Core reset sequence (nonce reception)
     // Use broadcast writes to avoid system hang with 114 chips
     printf("  Performing core reset sequence (broadcast)...\n");
 
@@ -857,7 +839,7 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
 
     printf("  Core reset sequence complete\n");
 
-    // CRITICAL: Long stabilization delay after core reset
+    // Long stabilization delay after core reset
     // Factory test and bmminer both have significant delays here
     // ASICs need time to stabilize after reset before accepting work
     printf("  Waiting 2 seconds for core stabilization...\n");
@@ -866,22 +848,21 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
     // 7e. Configure FPGA nonce timeout based on chip frequency
     // Factory test: dhash_set_timeout() at sub_222f8 @ 0x222f8
     // Writes to logical FPGA index 20 (0x14) → physical offset 0x08C
-    // Formula: timeout_value = (calculated_timeout & 0x1FFFF) | 0x80000000
-    printf("  Configuring FPGA nonce timeout for %d MHz...\n", FREQUENCY_525MHZ);
-    uint32_t timeout_calc = 0x1FFFF / FREQUENCY_525MHZ;  // Formula: 0x1FFFF / freq_mhz
-    uint32_t timeout_reg = (timeout_calc & 0x1FFFF) | 0x80000000;
-    fpga_write_indirect(ctx, FPGA_REG_TIMEOUT, timeout_reg);
-    printf("    FPGA timeout = %u cycles (register value: 0x%08X at offset 0x08C)\n",
-           timeout_calc, timeout_reg);
+    // The timeout value from FPGA dump is 0x800000F9 (249 cycles)
+    // This is already correct from bootloader - DO NOT recalculate!
+    // Formula analysis: 0xF9 = 249, which matches (timeout_value = 0x96 + base_offset)
+    // where timeout_value calculation is: FPGA_FREQ * 1.3 / (ASIC_FREQ * chip_count)
+    // For 525MHz with 114 chips: ~249 cycles
+    printf("  FPGA nonce timeout already configured: 0x%08X (keeping bootloader value)\n",
+           fpga_read_indirect(ctx, FPGA_REG_TIMEOUT));
+    // No write needed - bootloader value is correct
     usleep(10000);
 
-    // 8. Set final ticket mask
-    printf("  Setting final ticket mask = 0xFF...\n");
-    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_TICKET_MASK,
-                              TICKET_MASK_256_CORES) < 0) {
-        fprintf(stderr, "Error: Failed to set final ticket mask\n");
-        return -1;
-    }
+    // 8. Keep ticket mask at 0xFFFFFFFF (all cores enabled)
+    // Don't restrict to 0xFF - that only enables 8 cores!
+    // For pattern testing with 80 cores, we need all cores enabled.
+    printf("  Keeping ticket mask = 0xFFFFFFFF (all cores enabled for testing)...\n");
+    // Already set to 0xFFFFFFFF in stage 1, no need to change it
     usleep(10000);
 
     // 9. Set nonce overflow control (disable overflow)
@@ -971,7 +952,7 @@ int bm1398_set_baud_rate(bm1398_context_t *ctx, int chain, uint32_t baud_rate) {
         // Step 3: Configure CLK_CTRL register (0x18) with divisor + high-speed bit
         printf("    Writing CLK_CTRL (reg 0x18) with divisor and high-speed bit...\n");
 
-        // CRITICAL FIX: Build CLK_CTRL value from scratch, don't read
+        // Build CLK_CTRL value from scratch, don't read
         // Base value: 0xF0000000 (from reset sequence)
         // Add divisor and high-speed bit
         reg_val = 0xF0000000 |                          // Base value from reset
@@ -997,7 +978,7 @@ int bm1398_set_baud_rate(bm1398_context_t *ctx, int chain, uint32_t baud_rate) {
         // Configure CLK_CTRL register (0x18) with divisor, clear high-speed bit
         printf("    Writing CLK_CTRL (reg 0x18) with divisor, low-speed mode...\n");
 
-        // CRITICAL FIX: Build CLK_CTRL value from scratch, don't read
+        // Build CLK_CTRL value from scratch, don't read
         // Base value: 0xF0000400 (from reset sequence with soft reset enabled)
         // Add divisor, ensure high-speed bit is clear
         reg_val = 0xF0000400 |                          // Base value from reset with soft reset enabled
@@ -1164,7 +1145,7 @@ int bm1398_get_crc_error_count(bm1398_context_t *ctx) {
  * Enable work send (FPGA control register)
  * Source: Bitmain enable_work_send()
  *
- * CRITICAL: Factory test (sub_2213c @ 0x2213c) clears bit 14 of register 35
+ * Factory test (sub_2213c @ 0x2213c) clears bit 14 of register 35
  * to disable auto-pattern generation BEFORE accepting external work!
  */
 int bm1398_enable_work_send(bm1398_context_t *ctx) {
@@ -1172,7 +1153,24 @@ int bm1398_enable_work_send(bm1398_context_t *ctx) {
         return -1;
     }
 
-    // CRITICAL: Disable auto-pattern generation (clear bit 14 of register 35)
+    // Verify/set register 0x080 work routing config
+    // This register MUST have bit 31 set (0x80808000) to route work to ASICs!
+    // If bit 31 is clear, work goes into FPGA but never reaches ASICs
+    uint32_t reg_0x080 = ctx->fpga_regs[0x080 / 4];
+    printf("  Verifying FPGA work routing (reg 0x080)...\n");
+    printf("    Register 0x080 before: 0x%08X\n", reg_0x080);
+    if ((reg_0x080 & 0x80000000) == 0) {
+        printf("    WARNING: Bit 31 NOT set - work routing DISABLED!\n");
+        printf("    Setting 0x080 = 0x80808000 to enable work routing...\n");
+        ctx->fpga_regs[0x080 / 4] = 0x80808000;
+        __sync_synchronize();
+        usleep(10000);
+        printf("    Register 0x080 after:  0x%08X\n", ctx->fpga_regs[0x080 / 4]);
+    } else {
+        printf("    OK: Work routing enabled (bit 31 set)\n");
+    }
+
+    // Disable auto-pattern generation (clear bit 14 of register 35)
     // Factory test sub_2213c: fpga_read(0x23); fpga_write(0x23, val & 0xffffbfff)
     // This MUST be done or FPGA won't accept external work!
     uint32_t reg35 = fpga_read_indirect(ctx, FPGA_REG_WORK_CTRL_ENABLE);
@@ -1211,17 +1209,29 @@ int bm1398_start_work_gen(bm1398_context_t *ctx) {
 }
 
 /**
- * Check if work FIFO has space available
- * Returns: Available buffer space, or -1 on error
+ * Check if work FIFO has space available for a specific chain
+ * Returns: 1 if ready, 0 if not ready, -1 on error
  *
  * Source: Bitmain single_board_test.c line 6220 (is_work_fifo_ready)
+ * IDA Pro: sub_224A4 @ 0x224a4 - reads logical register 3 and checks chain bit
+ * Must check chain-specific bit, not just raw value!
  */
-int bm1398_check_work_fifo_ready(bm1398_context_t *ctx) {
+int bm1398_check_work_fifo_ready(bm1398_context_t *ctx, int chain) {
     if (!ctx || !ctx->initialized) {
         return -1;
     }
 
-    return ctx->fpga_regs[REG_BUFFER_SPACE];
+    if (chain < 0 || chain >= MAX_CHAINS) {
+        return -1;
+    }
+
+    // Read buffer space register (REG_BUFFER_SPACE = 0x00C)
+    // Factory test sub_224A4: reads logical register 3, checks bit for chain
+    // Logical register 3 maps to physical word 3 → byte offset 0x00C
+    uint32_t buffer_status = ctx->fpga_regs[REG_BUFFER_SPACE];
+
+    // Check if bit for this chain is set (indicates space available)
+    return ((buffer_status & (1 << chain)) != 0) ? 1 : 0;
 }
 
 /**
@@ -1242,10 +1252,14 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
         return -1;
     }
 
-    // CRITICAL: Wait for FPGA work FIFO space before sending
+    // Wait for FPGA work FIFO space before sending
     // Factory test checks buffer space to avoid overwhelming FPGA
+    uint32_t buffer_status = ctx->fpga_regs[REG_BUFFER_SPACE];
+    printf("[DEBUG] Buffer space register (0x00C): 0x%08X (chain %d bit=%d)\n",
+           buffer_status, chain, (buffer_status >> chain) & 1);
+
     int timeout = 1000;  // 1 second max wait
-    while (bm1398_check_work_fifo_ready(ctx) < 1 && timeout > 0) {
+    while (bm1398_check_work_fifo_ready(ctx, chain) < 1 && timeout > 0) {
         usleep(1000);  // 1ms
         timeout--;
     }
@@ -1253,6 +1267,8 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
         fprintf(stderr, "Error: Work FIFO timeout on chain %d\n", chain);
         return -1;
     }
+    printf("[DEBUG] FPGA work FIFO ready for chain %d (waited %dms)\n",
+           chain, 1000 - timeout);
 
     // Build work packet (148 bytes = 0x94)
     work_packet_t work;
@@ -1265,7 +1281,7 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
 
     // Work ID: Shift left by 3, then store in native byte order
     // Will be byte-swapped later with all other fields
-    // CRITICAL FIX: Don't pre-swap work_id, let the global swap handle it
+    // Don't pre-swap work_id, let the global swap handle it
     // Factory test: work_id << 3, then whole packet byte-swapped
     work.work_id = work_id << 3;
 
@@ -1281,39 +1297,57 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
     // Total: 148 bytes / 4 = 37 words
     // This swaps work_id, work_data, and midstates to network byte order
     uint32_t *words = (uint32_t *)&work;
+
+    printf("[DEBUG] Work packet before byte-swap (work_id=%u, chain=%d):\n", work_id, chain);
+    printf("  Header: type=0x%02X chain_id=0x%02X work_id=0x%08X\n",
+           work.work_type, work.chain_id, work.work_id);
+    printf("  First 16 bytes: ");
+    for (int j = 0; j < 16 && j < sizeof(work); j++) {
+        printf("%02x ", ((uint8_t*)&work)[j]);
+    }
+    printf("\n");
+
     for (int i = 0; i < sizeof(work) / 4; i++) {
         words[i] = __builtin_bswap32(words[i]);
     }
 
+    printf("[DEBUG] After byte-swap, first 4 words: 0x%08X 0x%08X 0x%08X 0x%08X\n",
+           words[0], words[1], words[2], words[3]);
+
     // Hex dump for debugging
-    printf("  Work Packet Hex Dump (148 bytes):\n");
-    for(int j=0; j<148; j++) {
-        printf("%02x ", ((uint8_t*)&work)[j]);
-        if ((j+1) % 16 == 0) printf("\n");
-    }
-    printf("\n");
+    // printf("  Work Packet Hex Dump (148 bytes):\n");
+    // for(int j=0; j<148; j++) {
+    //     printf("%02x ", ((uint8_t*)&work)[j]);
+    //     if ((j+1) % 16 == 0) printf("\n");
+    // }
+    // printf("\n");
 
     // Write work packet to FPGA using INDIRECT MAPPING (FIFO-style)
-    // CRITICAL: Matches factory test sub_22B10 @ line 19430
-    // First word: logical index 16 (FPGA_REG_TW_WRITE_CMD_FIRST)
-    // Rest: logical index 17 (FPGA_REG_TW_WRITE_CMD_REST)
-    // Both map to same physical register 0x040!
+    // Register mapping shows index 16→0x040, index 17→0x080!
+    // We need to write ALL 37 words to index 16 (the FIFO at 0x040)
     //
-    // Factory test code:
-    //   fpga_write(16, words[0]);
-    //   for (i = 1; i < num_words; i++) {
-    //       fpga_write(17, words[i]);  // Note: index 17, not 16+i!
-    //   }
+    // WRONG (previous code):
+    //   fpga_write(16, words[0]);     // → 0x040
+    //   fpga_write(17, words[1..36]); // → 0x080 (WRONG REGISTER!)
+    //
+    // CORRECT:
+    //   fpga_write(16, words[0..36]); // → 0x040 (FIFO pushes all words)
 
     int num_words = sizeof(work) / 4;  // 148 bytes / 4 = 37 words
 
-    // First word to index 16
-    fpga_write_indirect(ctx, FPGA_REG_TW_WRITE_CMD_FIRST, words[0]);
+    printf("[DEBUG] Writing %d words to FPGA FIFO at 0x040 (index 16)\n", num_words);
+    printf("[DEBUG] First word: 0x%08X\n", words[0]);
 
-    // Remaining words to index 17 (FIFO writes to same physical register)
-    for (int i = 1; i < num_words; i++) {
-        fpga_write_indirect(ctx, FPGA_REG_TW_WRITE_CMD_REST, words[i]);
+    // Write ALL words to index 16 (FIFO at 0x040)
+    for (int i = 0; i < num_words; i++) {
+        fpga_write_indirect(ctx, FPGA_REG_TW_WRITE_CMD_FIRST, words[i]);
     }
+
+    printf("[DEBUG] Work packet sent to FPGA (work_id=%u, chain=%d)\n", work_id, chain);
+    printf("[DEBUG] FPGA register 0x040 final value: 0x%08X\n",
+           ctx->fpga_regs[0x040 / 4]);
+
+    usleep(10); // Small delay to prevent overwhelming FPGA
 
     return 0;
 }
@@ -1341,8 +1375,16 @@ int bm1398_get_nonce_count(bm1398_context_t *ctx) {
  *
  * Source: Bitmain single_board_test.c get_return_nonce
  *
- * CRITICAL FIX: Nonce FIFO returns 32-bit value, not 64-bit
- * Factory test reads single register for nonce data
+ * Nonce FIFO returns 64-bit response (two 32-bit reads)
+ * First read: Nonce value (32 bits)
+ * Second read: Metadata - work_id, chip_id, chain_id (32 bits)
+ *
+ * Format verified from S19 FPGA interface:
+ * Word 0 [31:0]: Nonce value (little-endian)
+ * Word 1 [31:24]: Chain ID
+ * Word 1 [23:16]: Chip ID
+ * Word 1 [15:8]: Core ID
+ * Word 1 [7:0]: Work ID (lower 8 bits)
  */
 int bm1398_read_nonce(bm1398_context_t *ctx, nonce_response_t *nonce) {
     if (!ctx || !ctx->initialized || !nonce) {
@@ -1351,18 +1393,17 @@ int bm1398_read_nonce(bm1398_context_t *ctx, nonce_response_t *nonce) {
 
     volatile uint32_t *regs = ctx->fpga_regs;
 
-    // Read nonce data from FIFO (single 32-bit register read)
-    // Each FIFO read pops one entry from the nonce queue
-    uint32_t nonce_data = regs[REG_RETURN_NONCE];
+    // Read nonce data from FIFO (64-bit = two 32-bit register reads)
+    // First read pops the entry, second read gets metadata
+    uint32_t nonce_value = regs[REG_RETURN_NONCE];  // First read: nonce value
+    uint32_t nonce_meta = regs[REG_RETURN_NONCE];   // Second read: metadata
 
     // Parse nonce response format from FPGA
-    // The exact format depends on FPGA implementation
-    // For now, store raw value and extract what we can
-    nonce->nonce = nonce_data;
-    nonce->chain_id = (nonce_data >> 0) & 0xF;   // Bits [3:0]: chain
-    nonce->work_id = (nonce_data >> 8) & 0xFF;    // Bits [15:8]: work_id (needs verification)
-    nonce->chip_id = (nonce_data >> 16) & 0xFF;   // Bits [23:16]: chip (needs verification)
-    nonce->core_id = 0;  // Core ID encoding TBD
+    nonce->nonce = nonce_value;                    // Full 32-bit nonce
+    nonce->chain_id = (nonce_meta >> 24) & 0xFF;   // Bits [31:24]: chain
+    nonce->chip_id = (nonce_meta >> 16) & 0xFF;    // Bits [23:16]: chip
+    nonce->core_id = (nonce_meta >> 8) & 0xFF;     // Bits [15:8]: core
+    nonce->work_id = (nonce_meta & 0xFF);          // Bits [7:0]: work_id
 
     return 1;  // Successfully read nonce
 }

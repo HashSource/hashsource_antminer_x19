@@ -20,11 +20,11 @@ parse_local_config_file : Test_Process : PT1
 parse_local_config_file : Miner_Type : S19_Pro
 parse_local_config_file : Board_Name : NBP1901-38
 parse_local_config_file : Asic_Type : BM1398
-parse_local_config_file : Asic_Num : 114
+parse_local_config_file : Asic_Num : 2
 parse_local_config_file : Voltage_Domain : 38
 parse_local_config_file : Asic_Num_Per_Voltage_Domain : 3
 parse_local_config_file : Read_Temperature_From_Pic : true
-parse_local_config_file : Read_Temperature_From_Asic : false
+parse_local_config_file : Read_Temperature_From_Asic : true
 parse_local_config_file : Pic_Sensor_Model : LM75A
 parse_local_config_file : gPic_sensor_num : 4
 parse_local_config_file : gPic_sensor_low_3_bits_addr[0] : 0
@@ -80,7 +80,7 @@ parse_local_config_file : Max_Wait_Cooling_Down_Time : 90
 parse_local_config_file : Time_For_Cooling_Hashboard : 0
 parse_local_config_file : Fan_Speed : 100
 parse_local_config_file : Display_result_Voltage_Domain : true
-parse_local_config_file : Display_result_Every_Core : false
+parse_local_config_file : Display_result_Every_Core : true
 parse_local_config_file : Test_Config_Data_Version : 0
 parse_local_config_file : Voltage_Accuracy : 50
 parse_local_config_file : Close_Power_Delay : 0
@@ -117,35 +117,15 @@ pic_power_on_hashboard : fpga reset one more time
 set_asic_register_stage_1 : Software reset core done
 set_asic_register_stage_1 : set TM to 0xffffffff
 read_temperature_from_PIC_N_times : Start read_temperature_from_PIC_N_times
-read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 0:      local: 31
-read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 1:      local: 31
-read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 2:      local: 31
-read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 3:      local: 31
+read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 0:      local: 19
+read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 1:      local: 19
+read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 2:      local: 19
+read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 3:      local: 19
 read_temperature_from_PIC_N_times : All PIC sensor read out data
 get_register_value : asic_name: 0x1398
 receive_function : BTC start receive_function
-Single_Board_PT1_Test : First: Find 114 ASIC
-
-Single_Board_PT1_Test : Set chain inactive
-Single_Board_PT1_Test : Set asic address
-set_uart_relay : address_interval = 2, Voltage_Domain = 38
-Single_Board_PT1_Test : Set chain baud as 12000000
 get_register_value : asic_name: 0x1398
-Single_Board_PT1_Test : Second: Find 114 ASIC
-
-Single_Board_PT1_Test : Set Chain 0 baud: 26
-set_asic_register_stage_1 : Software reset core done
-set_asic_register_stage_1 : set TM to 0xffffffff
-get_register_value : asic_name: 0x1398
-Single_Board_PT1_Test : Third: Find 114 ASIC
-
-write_EEPROM_PT1_marker : check marker saved in EEPROM success
-Single_Board_PT1_Test : write PT1 EEPROM marker success
 receive_function : BTC receive_function stop
 PT1_show_status_func : PT1_show_status_func stop
 pic_heart_beat_func : pic_heart_beat_func stop
-PT1_display_result_on_LCD : ASIC:   OK
-
-PT1_display_result_on_LCD : EEPROM: OK
-
-PT1_display_result_on_LCD : PIC sensor: OK
+Single_Board_PT1_Test : Only find 114 ASIC

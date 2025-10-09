@@ -20,16 +20,13 @@
 #define FPGA_REG_SIZE               5120
 
 // FPGA Indirect Register Mapping
-// CRITICAL: Both bmminer and factory test use indirect register access!
-// Source: Binary analysis of single_board_test @ 0x48894 and bmminer @ 0x7ee48
-// These are LOGICAL INDICES that map to physical word offsets via lookup table
 
 // Logical register indices (use with fpga_read_indirect/fpga_write_indirect)
 #define FPGA_REG_CONTROL            0   // Maps to word 0 (0x000)
 #define FPGA_REG_TW_WRITE_CMD_FIRST 16  // Maps to word 16 (0x040) - first word of work
 #define FPGA_REG_TW_WRITE_CMD_REST  17  // Maps to word 16 (0x040) - rest of work (SAME!)
-#define FPGA_REG_SPECIAL_18         18  // Maps to word 33 (0x084) - CRITICAL init register
-#define FPGA_REG_TIMEOUT            20  // Maps to word 35 (0x08C) ⚠️ NOT 0x014!
+#define FPGA_REG_SPECIAL_18         18  // Maps to word 33 (0x084) - init register
+#define FPGA_REG_TIMEOUT            20  // Maps to word 35 (0x08C)
 #define FPGA_REG_WORK_CTRL_ENABLE   35  // Maps to word 70 (0x118) - Work control/auto-gen
 #define FPGA_REG_CHAIN_WORK_CONFIG  36  // Maps to word 71 (0x11C)
 #define FPGA_REG_WORK_QUEUE_PARAM   42  // Maps to word 80 (0x140)
@@ -173,7 +170,7 @@ typedef struct __attribute__((packed)) {
 int bm1398_init(bm1398_context_t *ctx);
 void bm1398_cleanup(bm1398_context_t *ctx);
 
-// FPGA indirect register access (CRITICAL - matches bmminer/factory test)
+// FPGA indirect register access (matches bmminer/factory test)
 uint32_t fpga_read_indirect(bm1398_context_t *ctx, int logical_index);
 void fpga_write_indirect(bm1398_context_t *ctx, int logical_index, uint32_t value);
 
@@ -210,7 +207,7 @@ int bm1398_set_frequency(bm1398_context_t *ctx, int chain, uint32_t freq_mhz);
 // Work submission
 int bm1398_enable_work_send(bm1398_context_t *ctx);
 int bm1398_start_work_gen(bm1398_context_t *ctx);
-int bm1398_check_work_fifo_ready(bm1398_context_t *ctx);
+int bm1398_check_work_fifo_ready(bm1398_context_t *ctx, int chain);
 int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
                     const uint8_t *work_data_12bytes,
                     const uint8_t midstates[4][32]);

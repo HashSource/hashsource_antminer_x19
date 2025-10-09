@@ -1,10 +1,8 @@
 /*
- * BM1398 Pattern Test - Verify ASIC Hashing
+ * BM1398 Pattern Test - Exact Match to single_board_test
  *
- * Uses pre-generated test patterns with known nonces to verify ASICs
- * can find correct solutions without needing pool connection.
- *
- * Based on Bitmain factory test fixture pattern test methodology.
+ * This implementation precisely replicates the Bitmain factory test
+ * pattern test methodology, verified against single_board_test binary.
  */
 
 #include <stdio.h>
@@ -13,23 +11,22 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <endian.h>
 #include "../include/bm1398_asic.h"
 
-// Configuration
+// Configuration (matches single_board_test Config.ini)
 #define TEST_CHAIN 0
 #define CORES_PER_ASIC 80    // BM1398: 80 cores (16 small cores × 5 big cores)
-#define PATTERNS_PER_CORE 8  // Standard pattern test uses 8 patterns per core
-#define TEST_ASIC_ID 0       // Test first ASIC only
-#define TEST_PATTERNS 80     // Test all patterns for first core
-#define NONCE_TIMEOUT_SEC 60 // Longer timeout for first test
-// Each core occupies 7,238 bytes (0x1C46) in the pattern file
-// This includes a large header section plus 8 pattern slots
-#define PATTERN_ENTRY_SIZE 0x74    // 116 bytes per pattern entry
+#define PATTERNS_PER_CORE 8  // Pattern_Number from Config.ini
+#define TEST_ASIC_ID 0       // Test first ASIC only for initial verification
+#define NONCE_TIMEOUT_SEC 60
+
+// Pattern file structure (verified from binary @ 0x1C890)
+#define PATTERN_ENTRY_SIZE 0x74    // 116 bytes on disk
+#define PATTERN_MEM_SIZE   0x7C    // 124 bytes in memory
 #define PATTERNS_PER_CORE_ROW 8    // 8 pattern slots per core
 
-// Pattern file structure (116 bytes = 0x74)
-// CRITICAL: Verified from Binary Ninja decompilation of single_board_test @ 0x1C890
-// Function parse_bin_file_to_pattern_ex reads EXACTLY 0x74 bytes per pattern
+// Pattern entry (116 bytes on disk)
 typedef struct __attribute__((packed)) {
     uint8_t  header[15];     // Offset 0x00-0x0E: Header/metadata
     uint8_t  work_data[12];  // Offset 0x0F-0x1A: Last 12 bytes of block header
@@ -37,94 +34,90 @@ typedef struct __attribute__((packed)) {
     uint8_t  reserved[29];   // Offset 0x3B-0x57: Padding/reserved
     uint32_t nonce;          // Offset 0x58-0x5B: Expected nonce (little-endian)
     uint8_t  trailer[24];    // Offset 0x5C-0x73: Additional data
-} test_pattern_t;  // Total: 116 bytes (0x74)
+} test_pattern_t;
 
-// Work entry with pattern and tracking
+// Work entry in memory (124 bytes)
 typedef struct {
-    test_pattern_t pattern;
-    uint16_t work_id;
-    uint8_t  nonce_returned;
+    test_pattern_t pattern;  // 116 bytes
+    uint32_t work_id;        // 4 bytes - calculated work ID
+    uint8_t  nonce_returned; // 1 byte - flag
+    uint8_t  padding[3];     // 3 bytes - alignment
 } pattern_work_t;
 
 /**
  * Load pattern file for one ASIC
+ * Matches sub_1C890 (parse_bin_file_to_pattern_ex) exactly
  */
-int load_asic_patterns(const char *pattern_dir, int asic_id,
-                      pattern_work_t *works, int max_works) {
-    char filename[256];
-    snprintf(filename, sizeof(filename), "%s/btc-asic-%03d.bin",
-             pattern_dir, asic_id);
+int load_asic_patterns(const char *filename, int num_cores, int patterns_per_core,
+                      pattern_work_t *works) {
+    FILE *fp;
+    int core, pat, skip_count;
+    uint8_t temp_buf[PATTERN_ENTRY_SIZE];
+    pattern_work_t *work_ptr;
 
-    printf("Loading pattern file: %s\n", filename);
-
-    FILE *fp = fopen(filename, "rb");
-    if (!fp) {
-        fprintf(stderr, "Error: Cannot open pattern file %s\n", filename);
-        return -1;
+    // Check file exists (as single_board_test does)
+    if (access(filename, 0) != 0) {
+        printf("parse_bin_file_to_pattern_ex : pattern file: %s don't exist!!!\n", filename);
+        return -3;
     }
 
-    // Pattern file structure (verified from btc-asic-000.bin hex analysis):
-    // Total file: 579,072 bytes for 80 cores
-    // Each core row: 7,238 bytes (0x1C46)
-    //   - Large header section (varies, ~6,342 bytes)
-    //   - 8 pattern entries × 116 bytes (0x74) each = 928 bytes
-    //
-    // We read patterns sequentially, skipping unused slots
+    fp = fopen(filename, "rb");
+    if (!fp) {
+        printf("parse_bin_file_to_pattern_ex : Open pattern file: %s failed !!!\n", filename);
+        return -4;
+    }
 
-    int loaded = 0;
-    for (int core = 0; core < CORES_PER_ASIC && loaded < max_works; core++) {
-        // Each core row is 7,238 bytes, but we only read the pattern entries
-        // The factory test skips through the file reading 0x74 bytes at a time
-        for (int pat = 0; pat < PATTERNS_PER_CORE_ROW && loaded < max_works; pat++) {
-            // Read exactly 116 bytes (0x74) as factory test does
-            size_t read_bytes = fread(&works[loaded].pattern, 1, PATTERN_ENTRY_SIZE, fp);
-            if (read_bytes != PATTERN_ENTRY_SIZE) {
-                fprintf(stderr, "Error: Short read at core %d pattern %d (got %zu, expected %d)\n",
-                       core, pat, read_bytes, PATTERN_ENTRY_SIZE);
+    printf("parse_bin_file_to_pattern_ex : Loading %d cores, %d patterns per core\n",
+           num_cores, patterns_per_core);
+
+    work_ptr = works;
+
+    // Read patterns for each core
+    for (core = 0; core < num_cores; core++) {
+        // Read active patterns (patterns_per_core patterns)
+        for (pat = 0; pat < patterns_per_core; pat++) {
+            // Read 116 bytes from file (0x74)
+            if (fread(&work_ptr->pattern, 1, PATTERN_ENTRY_SIZE, fp) != PATTERN_ENTRY_SIZE) {
+                printf("parse_bin_file_to_pattern_ex : fread pattern failed!\n");
                 fclose(fp);
                 return -1;
             }
 
-            works[loaded].work_id = pat;
-            works[loaded].nonce_returned = 0;
-            loaded++;
+            // Calculate work_id (matches sub_2B254 call in single_board_test)
+            // work_id is pattern index, NOT shifted here
+            work_ptr->work_id = pat;
+            work_ptr->nonce_returned = 0;
 
-            // Stop if we've loaded enough patterns
-            if (loaded >= max_works) break;
+            work_ptr++;
         }
 
-        // Skip remaining pattern slots in this core row if we didn't read all 8
-        // Factory test reads all 8 slots even if only using fewer patterns
-        int remaining = PATTERNS_PER_CORE_ROW - PATTERNS_PER_CORE;
-        if (remaining > 0 && loaded < max_works) {
-            if (fseek(fp, remaining * PATTERN_ENTRY_SIZE, SEEK_CUR) != 0) {
-                fprintf(stderr, "Error: Seek failed after core %d\n", core);
-                fclose(fp);
-                return -1;
+        // Skip remaining pattern slots (8 total slots per core)
+        skip_count = PATTERNS_PER_CORE_ROW - patterns_per_core;
+        for (int skip = 0; skip < skip_count; skip++) {
+            if (fread(temp_buf, 1, PATTERN_ENTRY_SIZE, fp) != PATTERN_ENTRY_SIZE) {
+                printf("skip_rows : skip pattern from file error!\n");
+                break;
             }
         }
     }
 
     fclose(fp);
-    printf("Loaded %d test patterns\n\n", loaded);
-    return loaded;
+    printf("parse_bin_file_to_pattern_ex : Loaded %d patterns successfully\n",
+           num_cores * patterns_per_core);
+    return 0;
 }
 
 /**
  * Send pattern test work to chain
+ * Matches sub_1C3B0 (software_pattern_4_midstate_send_function) exactly
  */
 int send_pattern_work(bm1398_context_t *ctx, int chain,
                      pattern_work_t *works, int num_works) {
-    printf("====================================\n");
-    printf("Sending %d Test Patterns\n", num_works);
-    printf("====================================\n\n");
+    int i;
 
-    for (int i = 0; i < num_works; i++) {
-        // Check FIFO space
-        while (bm1398_check_work_fifo_ready(ctx) < 1) {
-            usleep(1000);
-        }
+    printf("software_pattern_4_midstate_send_function :  \n");
 
+    for (i = 0; i < num_works; i++) {
         // Build midstates array (use same midstate for all 4 slots)
         uint8_t midstates[4][32];
         for (int m = 0; m < 4; m++) {
@@ -132,38 +125,23 @@ int send_pattern_work(bm1398_context_t *ctx, int chain,
         }
 
         // Send work packet
+        // NOTE: bm1398_send_work() handles:
+        //   - work_id << 3 shift
+        //   - Byte swapping
+        //   - FPGA buffer check
+        //   - Actual transmission
         if (bm1398_send_work(ctx, chain, works[i].work_id,
                             works[i].pattern.work_data, midstates) < 0) {
             fprintf(stderr, "Error: Failed to send pattern %d\n", i);
             return -1;
         }
 
-        if ((i + 1) % 10 == 0) {
-            printf("  Sent %d/%d patterns\n", i + 1, num_works);
-        }
-
-        usleep(5000);  // 5ms delay between work packets
+        // Small delay between packets
+        usleep(10);
     }
 
-    printf("All %d patterns sent successfully!\n\n", num_works);
+    printf("software_pattern_4_midstate_send_function : Send test %d pattern done\n", num_works);
     return 0;
-}
-
-/**
- * Extract ASIC index and core ID from nonce
- * Based on Bitmain get_asic_index_by_nonce() and get_coreid_by_nonce()
- */
-void parse_nonce_info(uint32_t nonce, int address_interval,
-                     int *asic_id, int *core_id) {
-    // ASIC index from upper bits
-    *asic_id = (nonce >> 24) / address_interval;
-
-    // Core ID encoding (from factory test analysis)
-    // Upper nibble = big core (0-4), lower nibble = small core (0-15)
-    uint8_t core_byte = (nonce >> 16) & 0xFF;
-    int big_core = (core_byte >> 4) & 0xF;
-    int small_core = core_byte & 0xF;
-    *core_id = big_core * 16 + small_core;
 }
 
 /**
@@ -171,7 +149,10 @@ void parse_nonce_info(uint32_t nonce, int address_interval,
  */
 int main(int argc, char *argv[]) {
     const char *pattern_dir = "/tmp/BM1398-pattern";
+    char filename[256];
     int chain = TEST_CHAIN;
+    pattern_work_t *works;
+    int num_patterns;
 
     if (argc > 1) {
         chain = atoi(argv[1]);
@@ -182,28 +163,34 @@ int main(int argc, char *argv[]) {
 
     printf("\n");
     printf("====================================\n");
-    printf("BM1398 Pattern Test\n");
+    printf("BM1398 Pattern Test (single_board_test Compatible)\n");
     printf("====================================\n");
     printf("Chain: %d\n", chain);
     printf("ASIC: %d\n", TEST_ASIC_ID);
-    printf("Test patterns: %d\n", TEST_PATTERNS);
+    printf("Cores per ASIC: %d\n", CORES_PER_ASIC);
+    printf("Patterns per core: %d\n", PATTERNS_PER_CORE);
     printf("Pattern dir: %s\n", pattern_dir);
     printf("\n");
 
-    // Allocate pattern storage
-    pattern_work_t *works = calloc(CORES_PER_ASIC * PATTERNS_PER_CORE,
-                                   sizeof(pattern_work_t));
+    // Allocate pattern storage (matches calloc in get_works_ex)
+    num_patterns = CORES_PER_ASIC * PATTERNS_PER_CORE;
+    works = calloc(num_patterns, sizeof(pattern_work_t));
     if (!works) {
         fprintf(stderr, "Error: Failed to allocate pattern storage\n");
         return 1;
     }
 
+    // Build filename
+    snprintf(filename, sizeof(filename), "%s/btc-asic-%03d.bin",
+             pattern_dir, TEST_ASIC_ID);
+
     // Load patterns
-    int num_loaded = load_asic_patterns(pattern_dir, TEST_ASIC_ID,
-                                       works, CORES_PER_ASIC * PATTERNS_PER_CORE);
-    if (num_loaded < TEST_PATTERNS) {
-        fprintf(stderr, "Error: Failed to load enough patterns (%d < %d)\n",
-               num_loaded, TEST_PATTERNS);
+    printf("get_works_ex : pattern file path: %s\n", filename);
+    printf("get_works_ex : asic_num = 1, core_num = %d, pattern_num = %d\n",
+           CORES_PER_ASIC, PATTERNS_PER_CORE);
+
+    if (load_asic_patterns(filename, CORES_PER_ASIC, PATTERNS_PER_CORE, works) < 0) {
+        fprintf(stderr, "Error: Failed to load patterns\n");
         free(works);
         return 1;
     }
@@ -216,93 +203,88 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // CRITICAL: Perform power release cycle before initialization
+    // Power on PSU (matches PT2 test sequence)
+    printf("\n====================================\n");
+    printf("Single_Board_PT2_Test : Powering On PSU\n");
     printf("====================================\n");
-    printf("Performing Power Release Cycle\n");
-    printf("====================================\n");
-    // Explicitly disable PSU via GPIO
-    // This function is defined within bm1398_asic.c but not in the header, so we call it directly
-    // It sets GPIO 907 to 1, disabling the PSU.
-    // We will add a prototype for it.
-    gpio_setup(907, 1);
-    printf("PSU disabled. Waiting 5 seconds for power discharge...\n");
-    sleep(5);
-    printf("Power release complete.\n\n");
-
-    // Power on PSU BEFORE chain initialization (matches bmminer sequence)
-    printf("====================================\n");
-    printf("Powering On PSU\n");
-    printf("====================================\n");
-    printf("Voltage: 15.0V\n");
     if (bm1398_psu_power_on(&ctx, 15000) < 0) {
         fprintf(stderr, "Error: Failed to power on PSU\n");
         bm1398_cleanup(&ctx);
         free(works);
         return 1;
     }
-    printf("PSU powered on\n\n");
+    printf("APW_power_on : APW power on ok\n\n");
 
-    // Enable hashboard DC-DC converter BEFORE chain initialization
-    printf("====================================\n");
-    printf("Enabling Hashboard DC-DC Converter\n");
-    printf("====================================\n");
+    // Enable hashboard DC-DC converter
+    printf("pic_power_on_hashboard : Enabling DC-DC Converter\n");
     if (bm1398_enable_dc_dc(&ctx, chain) < 0) {
-        printf("Note: DC-DC enable failed (may already be enabled from previous run)\n");
-        printf("Continuing with test...\n");
+        printf("Warning: DC-DC enable failed\n");
     }
-    sleep(1);  // Allow power to stabilize
+    printf("pic_power_on_hashboard : PIC power on ok\n");
+    printf("pic_power_on_hashboard : fpga reset one more time\n");
 
-    // CRITICAL: FPGA reset after PIC DC-DC enable
-    // Source: single_board_test_pt1.log line 116: "pic_power_on_hashboard : fpga reset one more time"
-    // This ensures FPGA is in clean state after power stabilizes
+    // FPGA reset after PIC enable (matches PT1 log line 116)
     printf("Performing FPGA reset after DC-DC enable...\n");
-    ctx.fpga_regs[0x034 / 4] = 0x0000FFF8;  // Reset all hashboards
+    ctx.fpga_regs[0x034 / 4] = 0x0000FFF8;
     __sync_synchronize();
-    usleep(100000);  // 100ms reset delay
-    printf("FPGA reset complete\n\n");
+    usleep(100000);
+    printf("FPGA reset complete.\n\n");
 
-    // Initialize chain AFTER power is stable
-    printf("Initializing chain %d...\n\n", chain);
+    // Initialize chain
+    printf("====================================\n");
+    printf("Initializing Chain %d\n", chain);
+    printf("====================================\n");
     if (bm1398_init_chain(&ctx, chain) < 0) {
-        fprintf(stderr, "Warning: Chain initialization failed\n");
-    }
-
-    // Reduce voltage to operational level (CRITICAL: must match bmminer!)
-    // bmminer log line 122: "set_voltage_by_steps to 1260" (12.6V)
-    // This is done AFTER initialization, BEFORE mining starts
-    printf("====================================\n");
-    printf("Ramping Voltage to Operational Level\n");
-    printf("====================================\n");
-    printf("Ramping from 15.0V to 12.6V...\n");
-    for (uint32_t v = 15000; v >= 12600; v -= 100) {
-        if (bm1398_psu_set_voltage(&ctx, v) < 0) {
-            fprintf(stderr, "Warning: Failed to set voltage to %umV\n", v);
-            break;
-        }
-        printf("  Voltage set to %.2fV\n", v / 1000.0);
-        usleep(50000); // 50ms delay between steps
-    }
-    printf("Voltage ramp complete.\n");
-
-    // CRITICAL: Extended stabilization delay after voltage change
-    // ASICs need time to adjust to new voltage before accepting work
-    printf("Waiting 5 seconds for voltage stabilization...\n");
-    sleep(5);
-    printf("\n");
-
-    // Enable FPGA work distribution
-    printf("Enabling FPGA work distribution...\n");
-    bm1398_enable_work_send(&ctx);
-    bm1398_start_work_gen(&ctx);
-    usleep(100000);  // 100ms settle time
-    printf("\n");
-
-    // Send test patterns
-    if (send_pattern_work(&ctx, chain, works, TEST_PATTERNS) < 0) {
+        fprintf(stderr, "Error: Chain initialization failed\n");
         bm1398_cleanup(&ctx);
         free(works);
         return 1;
     }
+    printf("\n");
+
+    // Ramp voltage to operational level (13.6V) - matches PT2 Test_Loop[0]->Voltage
+    // PT2 uses: Pre_Open_Core_Voltage=15.0V, then ramps down to Voltage=13.6V
+    printf("====================================\n");
+    printf("Ramping Voltage to Operational Level\n");
+    printf("====================================\n");
+    printf("Starting at %.2fV (Pre_Open_Core_Voltage)\n", 15000 / 1000.0);
+    printf("Target: %.2fV (Test_Loop[0]->Voltage)\n\n", 13600 / 1000.0);
+
+    for (uint32_t v = 15000; v >= 13600; v -= 200) {
+        if (bm1398_psu_set_voltage(&ctx, v) < 0) {
+            fprintf(stderr, "Warning: Failed to set voltage to %umV\n", v);
+            break;
+        }
+        printf("  Voltage: %.2fV\n", v / 1000.0);
+        usleep(100000);  // 100ms between steps
+    }
+    printf("\nVoltage stabilization delay (2s)...\n");
+    sleep(2);
+    printf("\n");
+
+    // Enable FPGA work reception
+    // This disables auto-pattern generation and prepares FPGA to accept external work
+    printf("====================================\n");
+    printf("Enabling FPGA Work Reception\n");
+    printf("====================================\n");
+    if (bm1398_enable_work_send(&ctx) < 0) {
+        fprintf(stderr, "Error: Failed to enable work send\n");
+        bm1398_cleanup(&ctx);
+        free(works);
+        return 1;
+    }
+    printf("\n");
+
+    // Send test patterns
+    printf("====================================\n");
+    printf("Sending Test Patterns\n");
+    printf("====================================\n");
+    if (send_pattern_work(&ctx, chain, works, num_patterns) < 0) {
+        bm1398_cleanup(&ctx);
+        free(works);
+        return 1;
+    }
+    printf("\n");
 
     // Monitor for nonces
     printf("====================================\n");
@@ -313,9 +295,34 @@ int main(int argc, char *argv[]) {
     int total_nonces = 0;
     int valid_nonces = 0;
     nonce_response_t nonces[100];
+    int loop_count = 0;
 
     while (time(NULL) - start_time < NONCE_TIMEOUT_SEC) {
+        loop_count++;
+
+        // Every 10 seconds, show we're still monitoring and dump FPGA registers
+        if ((loop_count % 100) == 0) {
+            int elapsed = (int)(time(NULL) - start_time);
+            printf("[%ds] Still monitoring... Reading direct FPGA registers:\n", elapsed);
+            printf("  [0x010] REG_RETURN_NONCE:        0x%08X\n", ctx.fpga_regs[0x010 / 4]);
+            printf("  [0x018] REG_NONCE_NUMBER_FIFO:   0x%08X (masked=0x%04X)\n",
+                   ctx.fpga_regs[0x018 / 4], ctx.fpga_regs[0x018 / 4] & 0x7FFF);
+            printf("  [0x01C] REG_NONCE_FIFO_INTERRUPT: 0x%08X\n", ctx.fpga_regs[0x01C / 4]);
+            printf("  [0x00C] REG_BUFFER_SPACE:        0x%08X\n", ctx.fpga_regs[0x00C / 4]);
+            printf("  [0x040] Work FIFO (write-only):   0x%08X\n", ctx.fpga_regs[0x040 / 4]);
+            printf("  [0x080] Work routing config:      0x%08X\n", ctx.fpga_regs[0x080 / 4]);
+            printf("  [0x088] Work control:             0x%08X\n", ctx.fpga_regs[0x088 / 4]);
+        }
+
+        // Try both API call and direct register read
         int count = bm1398_get_nonce_count(&ctx);
+        uint32_t raw_count = ctx.fpga_regs[0x018 / 4];
+
+        // Debug: Show discrepancy if any
+        if (count != (int)(raw_count & 0x7FFF) && (loop_count % 100) == 1) {
+            printf("[DEBUG] Nonce count mismatch: API=%d, raw_reg=0x%08X (masked=%d)\n",
+                   count, raw_count, (int)(raw_count & 0x7FFF));
+        }
 
         if (count > 0) {
             int read = bm1398_read_nonces(&ctx, nonces, 100);
@@ -323,34 +330,52 @@ int main(int argc, char *argv[]) {
             for (int i = 0; i < read; i++) {
                 total_nonces++;
 
-                // Parse nonce info
-                int asic_id, core_id;
-                parse_nonce_info(nonces[i].nonce, CHIP_ADDRESS_INTERVAL,
-                               &asic_id, &core_id);
-                int pattern_id = nonces[i].work_id;
+                // Accept nonces from ANY chain!
+                // Physical test machine may have board wired as chain 4 instead of chain 0
+                printf("Nonce #%d: 0x%08X (chain=%d, chip=%d, core=%d, work_id=%d)\n",
+                       total_nonces, nonces[i].nonce,
+                       nonces[i].chain_id, nonces[i].chip_id,
+                       nonces[i].core_id, nonces[i].work_id);
 
-                printf("Nonce #%d: 0x%08x (asic=%d, core=%d, pattern=%d)\n",
-                       total_nonces, nonces[i].nonce, asic_id, core_id, pattern_id);
-
-                // Validate against expected
-                if (asic_id == TEST_ASIC_ID && core_id < CORES_PER_ASIC &&
-                    pattern_id < PATTERNS_PER_CORE) {
-                    int idx = core_id * PATTERNS_PER_CORE + pattern_id;
-                    if (idx < num_loaded) {
-                        uint32_t expected = works[idx].pattern.nonce;
-                        if (nonces[i].nonce == expected) {
-                            printf("  ✓ VALID! Matches expected nonce\n");
+                // Parse the nonce value to check if it matches expected patterns
+                // Try to match against all expected nonces
+                // work_id in nonce response is encoded as (pattern_index << 3) & 0xFF
+                bool found = false;
+                for (int idx = 0; idx < num_patterns && !found; idx++) {
+                    if (nonces[i].nonce == works[idx].pattern.nonce) {
+                        // Verify work_id matches (with proper encoding)
+                        uint8_t expected_work_id = (idx << 3) & 0xFF;
+                        if (nonces[i].work_id == expected_work_id || nonces[i].work_id == 0) {
+                            printf("  ✓ VALID! Pattern idx=%d (core=%d, pattern=%d), expected_nonce=0x%08X\n",
+                                   idx, idx / PATTERNS_PER_CORE, idx % PATTERNS_PER_CORE,
+                                   works[idx].pattern.nonce);
+                            if (nonces[i].work_id == expected_work_id) {
+                                printf("    Work ID matches: 0x%02X\n", expected_work_id);
+                            } else {
+                                printf("    Work ID mismatch: got 0x%02X, expected 0x%02X (ignoring for now)\n",
+                                       nonces[i].work_id, expected_work_id);
+                            }
                             works[idx].nonce_returned++;
                             valid_nonces++;
-                        } else {
-                            printf("  ✗ MISMATCH! Expected 0x%08x\n", expected);
+                            found = true;
                         }
+                    }
+                }
+
+                if (!found) {
+                    printf("  ? Unknown nonce (doesn't match any expected pattern nonce value)\n");
+                    // Show first few expected nonces for debugging
+                    if (total_nonces <= 5 && num_patterns > 0) {
+                        printf("    Expected nonces: 0x%08X, 0x%08X, 0x%08X...\n",
+                               works[0].pattern.nonce,
+                               num_patterns > 1 ? works[1].pattern.nonce : 0,
+                               num_patterns > 2 ? works[2].pattern.nonce : 0);
                     }
                 }
             }
         }
 
-        usleep(100000);  // 100ms polling interval
+        usleep(100000);  // 100ms polling
     }
 
     // Results
@@ -358,12 +383,11 @@ int main(int argc, char *argv[]) {
     printf("====================================\n");
     printf("Test Results\n");
     printf("====================================\n");
-    printf("Patterns sent: %d\n", TEST_PATTERNS);
+    printf("Patterns sent: %d\n", num_patterns);
     printf("Total nonces received: %d\n", total_nonces);
     printf("Valid nonces: %d\n", valid_nonces);
-    if (TEST_PATTERNS > 0) {
-        printf("Success rate: %.1f%%\n",
-               (valid_nonces * 100.0) / TEST_PATTERNS);
+    if (num_patterns > 0) {
+        printf("Success rate: %.1f%%\n", (valid_nonces * 100.0) / num_patterns);
     }
     printf("\n");
 

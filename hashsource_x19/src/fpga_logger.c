@@ -156,6 +156,8 @@ int main(int argc, char *argv[]) {
     printf("Device: %s\n", FPGA_DEVICE);
     printf("Log file: %s\n", logfile);
     printf("Monitoring %d registers (0x000-0x%03X)\n", NUM_REGS, FPGA_SIZE - 4);
+    printf("  - Includes: 0x000-0x03F, 0x040-0x07F, 0x080-0x0FF, etc.\n");
+    printf("  - ALL registers are monitored for changes\n");
     printf("Poll interval: %d microseconds\n", POLL_INTERVAL_US);
     printf("Auto-restart: %s\n\n", auto_restart ? "yes" : "no");
 

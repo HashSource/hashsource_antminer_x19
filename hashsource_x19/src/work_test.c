@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // CRITICAL: Perform power release cycle before initialization
+    // Perform power release cycle before initialization
     printf("====================================\n");
     printf("Performing Power Release Cycle\n");
     printf("====================================\n");
@@ -114,7 +114,7 @@ int main(int argc, char *argv[]) {
     }
     sleep(1);  // Allow power to stabilize
 
-    // CRITICAL: FPGA reset after PIC DC-DC enable
+    // FPGA reset after PIC DC-DC enable
     // Source: single_board_test_pt1.log line 116: "pic_power_on_hashboard : fpga reset one more time"
     // This ensures FPGA is in clean state after power stabilizes
     printf("Performing FPGA reset after DC-DC enable...\n");
@@ -129,7 +129,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Warning: Chain initialization failed (may already be initialized)\n");
     }
 
-    // Reduce voltage to operational level (CRITICAL: must match bmminer!)
+    // Reduce voltage to operational level (must match bmminer!)
     printf("====================================\n");
     printf("Ramping Voltage to Operational Level\n");
     printf("====================================\n");
@@ -144,7 +144,7 @@ int main(int argc, char *argv[]) {
     }
     printf("Voltage ramp complete.\n");
 
-    // CRITICAL: Extended stabilization delay after voltage change
+    // Extended stabilization delay after voltage change
     printf("Waiting 5 seconds for voltage stabilization...\n");
     sleep(5);
     printf("\n");
@@ -155,7 +155,7 @@ int main(int argc, char *argv[]) {
     printf("====================================\n\n");
 
     // Check FIFO space
-    int fifo_space = bm1398_check_work_fifo_ready(&ctx);
+    int fifo_space = bm1398_check_work_fifo_ready(&ctx, chain);
     printf("Work FIFO space: %d\n\n", fifo_space);
 
     // Send test work packets
