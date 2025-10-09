@@ -251,7 +251,15 @@ int main(int argc, char *argv[]) {
         printf("Continuing with test...\n");
     }
     sleep(1);  // Allow power to stabilize
-    printf("\n");
+
+    // CRITICAL: FPGA reset after PIC DC-DC enable
+    // Source: single_board_test_pt1.log line 116: "pic_power_on_hashboard : fpga reset one more time"
+    // This ensures FPGA is in clean state after power stabilizes
+    printf("Performing FPGA reset after DC-DC enable...\n");
+    ctx.fpga_regs[0x034 / 4] = 0x0000FFF8;  // Reset all hashboards
+    __sync_synchronize();
+    usleep(100000);  // 100ms reset delay
+    printf("FPGA reset complete\n\n");
 
     // Initialize chain AFTER power is stable
     printf("Initializing chain %d...\n\n", chain);

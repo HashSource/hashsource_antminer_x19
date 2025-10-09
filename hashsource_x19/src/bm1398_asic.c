@@ -151,14 +151,32 @@ int bm1398_init(bm1398_context_t *ctx) {
     ctx->initialized = true;
     ctx->num_chains = 0;
 
+    // CRITICAL: Set FPGA to Bitmain's boot state FIRST
+    // FPGA logger analysis shows Bitmain starts with 0x080 = 0x008F8001
+    // Our FPGA boots at 0x080 = 0x00808000 (different firmware?)
+    // This mismatch causes 1000x UART slowdown (1-2 seconds vs 1-2ms per command)
+    printf("CRITICAL: Initializing FPGA to Bitmain boot state...\n");
+    printf("  Writing 0x080 = 0x008F8001 (Bitmain's initial state)...\n");
+    ctx->fpga_regs[0x080 / 4] = 0x008F8001;
+    __sync_synchronize();
+    usleep(100000);  // 100ms for FPGA to settle
+    printf("  Current 0x080 = 0x%08X\n\n", ctx->fpga_regs[0x080 / 4]);
+
     // CRITICAL: Direct register 0x080/0x088 init MUST happen FIRST
     // Before ANY other FPGA register operations!
     // These control fundamental FPGA mode/state
     // Sequence verified from working fan_test.c
     printf("CRITICAL: Early FPGA mode initialization...\n");
 
-    // Stage 1: Boot-time initialization (matches fan_test.c exactly)
-    ctx->fpga_regs[0x080 / 4] = 0x0080800F;
+    // Stage 1: Boot-time initialization - now starting from correct base
+    // Bitmain then writes 0x80808000, then 0x00808000
+    printf("  Stage 1a: Toggle bit 31 (Bitmain sequence)...\n");
+    ctx->fpga_regs[0x080 / 4] = 0x80808000;
+    __sync_synchronize();
+    usleep(50000);
+    printf("    Set 0x080 = 0x%08X\n", ctx->fpga_regs[0x080 / 4]);
+
+    ctx->fpga_regs[0x080 / 4] = 0x00808000;
     __sync_synchronize();
     usleep(100000);
     printf("  Set 0x080 = 0x%08X (boot init)\n", ctx->fpga_regs[0x080 / 4]);
@@ -218,29 +236,7 @@ int bm1398_init(bm1398_context_t *ctx) {
 
     // Direct register initialization (non-mapped registers)
     // These use direct byte offsets and are not in the mapping table
-
-    // Stage 2: Bmminer startup sequence (matches fan_test.c lines 114-128)
-    // These additional writes configure the FPGA for mining operation
-    printf("  Configuring FPGA for mining operation...\n");
-    ctx->fpga_regs[0x080 / 4] = 0x8080800F;  // Set bit 31
-    __sync_synchronize();  // CRITICAL: Flush write to FPGA
-    usleep(50000);
-    printf("  Set 0x080 = 0x%08X (bit 31 set)\n", ctx->fpga_regs[0x080 / 4]);
-
-    ctx->fpga_regs[0x088 / 4] = 0x00009C40;
-    __sync_synchronize();  // CRITICAL: Flush write to FPGA
-    usleep(50000);
-    printf("  Set 0x088 = 0x%08X\n", ctx->fpga_regs[0x088 / 4]);
-
-    ctx->fpga_regs[0x080 / 4] = 0x0080800F;  // Clear bit 31
-    __sync_synchronize();  // CRITICAL: Flush write to FPGA
-    usleep(50000);
-    printf("  Set 0x080 = 0x%08X (bit 31 clear)\n", ctx->fpga_regs[0x080 / 4]);
-
-    ctx->fpga_regs[0x088 / 4] = 0x8001FFFF;  // Final config
-    __sync_synchronize();  // CRITICAL: Flush write to FPGA
-    usleep(100000);
-    printf("  Set 0x088 = 0x%08X (final config)\n", ctx->fpga_regs[0x088 / 4]);
+    // Note: Registers 0x080 and 0x088 already initialized above in Bitmain sequence
 
     // Control registers (0x000-0x01C)
     ctx->fpga_regs[REG_FAN_SPEED] = 0x00000500;  // 0x004: Status register
@@ -320,12 +316,19 @@ int bm1398_send_uart_cmd(bm1398_context_t *ctx, int chain,
 
     // Write command bytes to BC_COMMAND_BUFFER (0xC4, 0xC8, 0xCC)
     // Up to 12 bytes = 3 x 32-bit words
+    // CRITICAL: FPGA expects BIG-ENDIAN byte order!
+    // ARM is little-endian, so we must byte-swap
     for (size_t i = 0; i < (len + 3) / 4; i++) {
         uint32_t word = 0;
         size_t bytes_to_copy = (len - i * 4);
         if (bytes_to_copy > 4) bytes_to_copy = 4;
 
         memcpy(&word, &cmd[i * 4], bytes_to_copy);
+
+        // Byte-swap to big-endian for FPGA
+        // Example: {0x53, 0x05, 0x00, 0x00} -> 0x53050000 (not 0x00000553)
+        word = __builtin_bswap32(word);
+
         regs[REG_BC_COMMAND_BUFFER + i] = word;
     }
 
@@ -786,6 +789,26 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
         printf("    Nonce FIFO already empty\n");
     }
     usleep(10000);
+
+    // 7c. CRITICAL: Re-enumerate chips at HIGH baud rate
+    // Factory test does SECOND enumeration here (line 134 in single_board_test_pt1.log)
+    // This verifies all chips respond correctly at high speed UART
+    // Source: single_board_test_pt1.log lines 132-134:
+    //   "Set chain baud as 12000000"
+    //   "Second: Find 114 ASIC"
+    printf("  SECOND chip enumeration (at HIGH baud %d Hz)...\n", BAUD_RATE_12MHZ);
+    printf("  Sending chain inactive command...\n");
+    if (bm1398_chain_inactive(ctx, chain) < 0) {
+        fprintf(stderr, "Warning: Chain inactive failed at high baud\n");
+    }
+    usleep(10000);
+
+    printf("  Re-enumerating %d chips at high baud...\n", num_chips);
+    if (bm1398_enumerate_chips(ctx, chain, num_chips) < 0) {
+        fprintf(stderr, "Warning: High-baud chip enumeration failed\n");
+        // Don't fail here - continue with initialization
+    }
+    usleep(50000);  // 50ms settle time after re-enumeration
 
     // 7d. Core reset sequence (critical for nonce reception)
     // Use broadcast writes to avoid system hang with 114 chips
