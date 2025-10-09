@@ -30,6 +30,7 @@ EEPROM_DETECT = $(BIN_DIR)/eeprom_detect
 CHAIN_TEST = $(BIN_DIR)/chain_test
 WORK_TEST = $(BIN_DIR)/work_test
 PATTERN_TEST = $(BIN_DIR)/pattern_test
+PATTERN_PARSER = $(BIN_DIR)/pattern_parser
 TEST_FIXTURE_SHIM = $(BIN_DIR)/test_fixture_shim.so
 
 # Source files for main miner
@@ -59,6 +60,9 @@ WORK_TEST_SRCS = $(SRC_DIR)/work_test.c $(SRC_DIR)/bm1398_asic.c
 # Source files for pattern_test (includes BM1398 driver)
 PATTERN_TEST_SRCS = $(SRC_DIR)/pattern_test.c $(SRC_DIR)/bm1398_asic.c
 
+# Source files for pattern_parser
+PATTERN_PARSER_SRCS = $(SRC_DIR)/pattern_parser.c
+
 # Source files for test fixture shim
 TEST_FIXTURE_SHIM_SRCS = $(SRC_DIR)/test_fixture_shim.c
 
@@ -72,6 +76,7 @@ EEPROM_DETECT_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(EEPROM_DETECT_SRCS
 CHAIN_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(CHAIN_TEST_SRCS)))
 WORK_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(WORK_TEST_SRCS)))
 PATTERN_TEST_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(PATTERN_TEST_SRCS)))
+PATTERN_PARSER_OBJS = $(patsubst %.c,$(OBJ_DIR)/%.o,$(notdir $(PATTERN_PARSER_SRCS)))
 
 # Compiler flags
 CFLAGS = -Wall -Wextra -O2 -g
@@ -83,7 +88,7 @@ CFLAGS += -D_GNU_SOURCE
 LDFLAGS = -pthread -lm -lrt
 
 # Default target
-all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT) $(CHAIN_TEST) $(WORK_TEST) $(PATTERN_TEST) $(TEST_FIXTURE_SHIM)
+all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT) $(CHAIN_TEST) $(WORK_TEST) $(PATTERN_TEST) $(PATTERN_PARSER) $(TEST_FIXTURE_SHIM)
 
 # Create directories
 dirs:
@@ -157,6 +162,14 @@ $(WORK_TEST): $(WORK_TEST_OBJS)
 $(PATTERN_TEST): $(PATTERN_TEST_OBJS)
 	@echo "Linking $@"
 	$(CC) $(PATTERN_TEST_OBJS) -o $@ $(LDFLAGS)
+	@echo "Stripping $@"
+	$(STRIP) $@
+	@echo "Build complete: $@"
+
+# Build pattern_parser (standalone utility)
+$(PATTERN_PARSER): $(PATTERN_PARSER_OBJS)
+	@echo "Linking $@"
+	$(CC) $(PATTERN_PARSER_OBJS) -o $@
 	@echo "Stripping $@"
 	$(STRIP) $@
 	@echo "Build complete: $@"
