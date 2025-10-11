@@ -31,53 +31,35 @@ static struct class *axi_fpga_class;
 static void __iomem *base_vir_addr;      /* ioremap'd virtual address */
 static void *base_vir_mem_addr;          /* Memory region structure */
 
-/* Debug: Track mmap operations */
-static atomic_t mmap_count = ATOMIC_INIT(0);
+/* Debug: Track mmap operations (simple counter, no atomics needed) */
+static int mmap_count = 0;
 
 /* File operations */
 static int axi_fpga_dev_open(struct inode *inode, struct file *filp)
 {
-    pr_info("[AXI_FPGA] open() called by PID %d (%s)\n",
-            current->pid, current->comm);
-    return 0;
+    return 0;  /* Match stock driver - no logging */
 }
 
 static int axi_fpga_dev_release(struct inode *inode, struct file *filp)
 {
-    pr_info("[AXI_FPGA] release() called by PID %d (%s)\n",
-            current->pid, current->comm);
-    return 0;
+    return 0;  /* Match stock driver - no logging */
 }
 
 static int axi_fpga_dev_mmap(struct file *filp, struct vm_area_struct *vma)
 {
-    unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
     unsigned long size = vma->vm_end - vma->vm_start;
     unsigned long pfn = FPGA_PHYS_ADDR >> PAGE_SHIFT;
-    int mmap_id = atomic_inc_return(&mmap_count);
-
-    pr_info("[AXI_FPGA] mmap() #%d called by PID %d (%s)\n",
-            mmap_id, current->pid, current->comm);
-    pr_info("[AXI_FPGA]   VMA: 0x%lx - 0x%lx (size 0x%lx)\n",
-            vma->vm_start, vma->vm_end, size);
-    pr_info("[AXI_FPGA]   Offset: 0x%lx, PFN: 0x%lx\n", offset, pfn);
-    pr_info("[AXI_FPGA]   Physical addr: 0x%08x, size: 0x%x\n",
-            FPGA_PHYS_ADDR, FPGA_SIZE);
 
     /* Set memory attributes - uncached, shared (matches original) */
     vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
     vma->vm_flags |= VM_IO | VM_DONTEXPAND | VM_DONTDUMP;
 
-    pr_info("[AXI_FPGA]   Page protection: 0x%lx\n",
-            pgprot_val(vma->vm_page_prot));
-
     /* Map physical FPGA memory to userspace */
     if (remap_pfn_range(vma, vma->vm_start, pfn, size, vma->vm_page_prot)) {
-        pr_err("[AXI_FPGA] ERROR: remap_pfn_range failed!\n");
+        printk(KERN_ERR "axi_fpga_dev_mmap error!\n");
         return -EAGAIN;
     }
 
-    pr_info("[AXI_FPGA] mmap() #%d completed successfully\n", mmap_id);
     return 0;
 }
 
@@ -94,11 +76,7 @@ static int __init axi_fpga_dev_init(void)
     int ret;
     struct device *dev;
 
-    pr_info("[AXI_FPGA] ======================================\n");
-    pr_info("[AXI_FPGA] Initializing driver (DEBUG VERSION)\n");
-    pr_info("[AXI_FPGA] FPGA Physical Address: 0x%08x\n", FPGA_PHYS_ADDR);
-    pr_info("[AXI_FPGA] FPGA Size: %d bytes (0x%x)\n", FPGA_SIZE, FPGA_SIZE);
-    pr_info("[AXI_FPGA] ======================================\n");
+    printk(KERN_INFO "In axi fpga driver!\n");  /* Match stock driver */
 
     /* Allocate character device number */
     ret = alloc_chrdev_region(&axi_fpga_dev_num, 0, 1, DEVICE_NAME);
@@ -109,8 +87,8 @@ static int __init axi_fpga_dev_init(void)
     pr_info("[AXI_FPGA] Allocated chrdev region: major %d, minor %d\n",
             MAJOR(axi_fpga_dev_num), MINOR(axi_fpga_dev_num));
 
-    /* Allocate and initialize cdev structure */
-    p_axi_fpga_dev = cdev_alloc();
+    /* Allocate and initialize cdev structure (using kmalloc like stock driver) */
+    p_axi_fpga_dev = kmalloc(sizeof(struct cdev), GFP_KERNEL);
     if (!p_axi_fpga_dev) {
         pr_err("[AXI_FPGA] ERROR: Failed to allocate cdev\n");
         ret = -ENOMEM;
@@ -155,9 +133,8 @@ static int __init axi_fpga_dev_init(void)
     /* Read first FPGA register (stock driver does this) */
     {
         uint32_t reg_val;
-        mb();  /* Memory barrier before read */
-        reg_val = ioread32(base_vir_addr);
-        mb();  /* Memory barrier after read */
+        /* Use raw read like stock driver - avoids ARMv7 barrier issues */
+        reg_val = *((volatile uint32_t *)base_vir_addr);
         pr_info("[AXI_FPGA] First FPGA register value: 0x%08x\n", reg_val);
     }
 
@@ -206,8 +183,7 @@ static void __exit axi_fpga_dev_exit(void)
 {
     pr_info("[AXI_FPGA] ======================================\n");
     pr_info("[AXI_FPGA] Removing driver\n");
-    pr_info("[AXI_FPGA] Total mmap operations: %d\n",
-            atomic_read(&mmap_count));
+    pr_info("[AXI_FPGA] Total mmap operations: %d\n", mmap_count);
 
     device_destroy(axi_fpga_class, axi_fpga_dev_num);
     pr_info("[AXI_FPGA] Destroyed device node\n");
@@ -235,6 +211,7 @@ static void __exit axi_fpga_dev_exit(void)
 module_init(axi_fpga_dev_init);
 module_exit(axi_fpga_dev_exit);
 
+MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("HashSource (reimplemented from Bitmain)");
 MODULE_DESCRIPTION("FPGA AXI Register Access Driver with Debug Logging");
 MODULE_VERSION("1.0-debug");

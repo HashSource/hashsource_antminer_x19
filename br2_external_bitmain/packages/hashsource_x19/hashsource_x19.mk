@@ -63,6 +63,17 @@ define HASHSOURCE_X19_INSTALL_TARGET_CMDS
 		$(INSTALL) -D -m 0755 $(@D)/config/S90hashsource \
 			$(TARGET_DIR)/etc/init.d/S90hashsource; \
 	fi
+	@echo "Installing stock Bitmain kernel modules..."
+	@mkdir -p $(TARGET_DIR)/lib/modules
+	-if [ -f $(@D)/src/kernel_modules/bitmain/bitmain_axi.ko ]; then \
+		$(INSTALL) -D -m 0644 $(@D)/src/kernel_modules/bitmain/bitmain_axi.ko \
+			$(TARGET_DIR)/lib/modules/bitmain_axi.ko; \
+		$(INSTALL) -D -m 0644 $(@D)/src/kernel_modules/bitmain/fpga_mem_driver.ko \
+			$(TARGET_DIR)/lib/modules/fpga_mem_driver.ko; \
+		echo "Installed stock kernel modules to /lib/modules/"; \
+	else \
+		echo "WARNING: Stock Bitmain modules not found in src/kernel_modules/bitmain/"; \
+	fi
 	@echo "Installing debug kernel modules..."
 	@mkdir -p $(TARGET_DIR)/lib/modules/debug
 	-if [ -f $(@D)/src/kernel_modules/bitmain_axi.ko ]; then \
@@ -72,7 +83,7 @@ define HASHSOURCE_X19_INSTALL_TARGET_CMDS
 			$(TARGET_DIR)/lib/modules/debug/fpga_mem_driver.ko; \
 		echo "Installed debug kernel modules to /lib/modules/debug/"; \
 	else \
-		echo "WARNING: Kernel modules not built, skipping installation"; \
+		echo "WARNING: Debug kernel modules not built, skipping installation"; \
 	fi
 endef
 

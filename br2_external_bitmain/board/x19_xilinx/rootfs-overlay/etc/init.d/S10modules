@@ -6,6 +6,12 @@
 
 case "$1" in
     start)
+        # Check if debug modules are already loaded
+        if [ -f /tmp/modules_loaded_debug ]; then
+            echo "FPGA kernel modules already loaded (debug version)"
+            exit 0
+        fi
+
         echo -n "Loading FPGA kernel modules: "
 
         # Load bitmain_axi.ko - FPGA register access driver

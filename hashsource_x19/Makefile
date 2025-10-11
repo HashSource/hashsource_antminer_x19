@@ -1,11 +1,12 @@
 # HashSource X19 Mining Software Makefile
 
 # Cross-compilation settings for ARM
-# Use buildroot toolchain if available, fallback to system arm-linux-gnueabihf-
+# Use buildroot toolchain (Linaro GCC 7.2-2017.11) to match stock kernel modules
 BUILDROOT_HOST := $(realpath ../buildroot/output/host)
-ifneq ($(wildcard $(BUILDROOT_HOST)/bin/arm-buildroot-linux-gnueabihf-gcc),)
-	CROSS_COMPILE ?= $(BUILDROOT_HOST)/bin/arm-buildroot-linux-gnueabihf-
+ifneq ($(wildcard $(BUILDROOT_HOST)/bin/arm-linux-gnueabihf-gcc),)
+	CROSS_COMPILE ?= $(BUILDROOT_HOST)/bin/arm-linux-gnueabihf-
 else
+	$(warning WARNING: Buildroot toolchain not found, using system toolchain)
 	CROSS_COMPILE ?= arm-linux-gnueabihf-
 endif
 
@@ -89,9 +90,13 @@ CFLAGS += -D_GNU_SOURCE
 LDFLAGS = -pthread -lm -lrt
 
 # Kernel module settings
-# KERNEL_SRC must be passed by Buildroot (points to Linux 4.6.0 source)
+# KERNEL_SRC points to Linux 4.6.0-xilinx source (used by stock S19 Pro firmware)
 # ARCH is always arm for Xilinx Zynq-7007 on S19 Pro
+KERNEL_SRC ?= $(realpath ../buildroot/output/build/linux-custom)
 ARCH = arm
+
+# Kernel modules to build
+KERNEL_MODULES = bitmain_axi.ko fpga_mem_driver.ko
 
 # Default target
 all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT) $(CHAIN_TEST) $(WORK_TEST) $(PATTERN_TEST) $(PATTERN_PARSER) $(TEST_FIXTURE_SHIM)
@@ -199,20 +204,44 @@ $(OBJ_DIR)/%.o: $(DRV_DIR)/%.c
 
 # Build kernel modules (if KERNEL_SRC is available)
 modules:
-	@if [ -d "$(KERNEL_SRC)" ]; then \
-		echo "========================================"; \
-		echo "Building kernel modules"; \
-		echo "========================================"; \
-		echo "Kernel source: $(KERNEL_SRC)"; \
-		$(MAKE) -C $(KERNEL_SRC) M=$(realpath $(KMOD_DIR)) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) modules; \
-		echo "Kernel modules built successfully"; \
-	else \
-		echo "========================================"; \
-		echo "WARNING: Kernel source not found"; \
-		echo "KERNEL_SRC is not set or does not exist"; \
-		echo "Skipping kernel module build"; \
-		echo "========================================"; \
+	@echo "========================================"
+	@echo "Building kernel modules"
+	@echo "========================================"
+	@if [ ! -d "$(KERNEL_SRC)" ]; then \
+		echo "ERROR: Kernel source not found at: $(KERNEL_SRC)"; \
+		echo "Please set KERNEL_SRC to point to Linux 4.6.0-xilinx source"; \
+		exit 1; \
 	fi
+	@echo "Kernel source: $(KERNEL_SRC)"
+	@echo "Cross-compiler: $(CROSS_COMPILE)gcc"
+	@$(CROSS_COMPILE)gcc --version | head -n1
+	@echo "Architecture: $(ARCH)"
+	@echo ""
+	@echo "Building modules..."
+	$(MAKE) -C $(KERNEL_SRC) M=$(realpath $(KMOD_DIR)) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) modules
+	@echo ""
+	@echo "Patching module CRCs to match bitmain kernel..."
+	@if [ ! -d "$(KMOD_DIR)/bitmain" ] || [ ! -f "$(KMOD_DIR)/bitmain/bitmain_axi.ko" ]; then \
+		echo "ERROR: Bitmain modules not found in $(KMOD_DIR)/bitmain/"; \
+		echo "Please copy bitmain modules from Bitmain machine first:"; \
+		exit 1; \
+	fi
+	@cd $(KMOD_DIR) && \
+		python3 patch_module_crcs.py bitmain_axi.ko bitmain/bitmain_axi.ko bitmain_axi.ko.patched && \
+		python3 patch_module_crcs.py fpga_mem_driver.ko bitmain/fpga_mem_driver.ko fpga_mem_driver.ko.patched && \
+		mv bitmain_axi.ko.patched bitmain_axi.ko && \
+		mv fpga_mem_driver.ko.patched fpga_mem_driver.ko
+	@echo ""
+	@echo "Kernel modules built and patched successfully:"
+	@for mod in $(KERNEL_MODULES); do \
+		if [ -f "$(KMOD_DIR)/$$mod" ]; then \
+			echo "  $$mod"; \
+			modinfo $(KMOD_DIR)/$$mod | grep -E "^(filename|vermagic|version|description):" | sed 's/^/    /'; \
+		else \
+			echo "  $$mod - FAILED"; \
+		fi; \
+	done
+	@echo "========================================"
 
 # Clean build artifacts
 clean:
@@ -221,6 +250,7 @@ clean:
 
 # Clean kernel modules
 modules-clean:
+	@echo "Cleaning kernel modules..."
 	@if [ -d "$(KMOD_DIR)" ]; then \
 		rm -f $(KMOD_DIR)/*.o $(KMOD_DIR)/*.ko $(KMOD_DIR)/*.mod.c $(KMOD_DIR)/*.mod.o; \
 		rm -f $(KMOD_DIR)/*.order $(KMOD_DIR)/*.symvers $(KMOD_DIR)/.*.cmd; \
@@ -242,16 +272,5 @@ help:
 	@echo "HashSource X19 Mining Software Build System"
 	@echo "=============================================="
 	@echo ""
-	@echo "Targets:"
-	@echo "  all      - Build the mining software (default)"
-	@echo "  clean    - Remove build artifacts"
-	@echo "  install  - Install to target filesystem"
-	@echo "  config   - Create sample configuration file"
-	@echo "  startup  - Create startup script"
-	@echo "  help     - Show this help message"
-	@echo ""
-	@echo "Cross-compilation:"
-	@echo "  Set CROSS_COMPILE to your toolchain prefix"
-	@echo "  Example: make CROSS_COMPILE=arm-buildroot-linux-gnueabihf-"
 
-.PHONY: all dirs clean modules modules-clean distclean install config startup help
+.PHONY: all dirs clean modules modules-clean modules-install distclean install config startup help

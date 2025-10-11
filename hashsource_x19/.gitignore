@@ -1,6 +1,7 @@
 # Build artifacts
 bin/
 obj/
+*.ko
 *.o
 *.a
 

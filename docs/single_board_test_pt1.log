@@ -1,5 +1,5 @@
 ================================================================================
-  TEST FIXTURE SHIM v3.0 - LD_PRELOAD Wrapper Loaded
+  TEST FIXTURE SHIM - LD_PRELOAD Wrapper Loaded
 ================================================================================
   LCD Emulation:    /dev/bitmain-lcd -> virtual
   GPIO Emulation:   gpio943 (start button) -> auto-pressed
@@ -117,15 +117,15 @@ pic_power_on_hashboard : fpga reset one more time
 set_asic_register_stage_1 : Software reset core done
 set_asic_register_stage_1 : set TM to 0xffffffff
 read_temperature_from_PIC_N_times : Start read_temperature_from_PIC_N_times
-read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 0:      local: 19
-read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 1:      local: 19
-read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 2:      local: 19
-read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 3:      local: 19
+read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 0:      local: 15
+read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 1:      local: 15
+read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 2:      local: 15
+read_temperature_from_PIC_N_times : Read from Pic ::    Sensor 3:      local: 15
 read_temperature_from_PIC_N_times : All PIC sensor read out data
 get_register_value : asic_name: 0x1398
 receive_function : BTC start receive_function
 get_register_value : asic_name: 0x1398
 receive_function : BTC receive_function stop
-PT1_show_status_func : PT1_show_status_func stop
 pic_heart_beat_func : pic_heart_beat_func stop
+PT1_show_status_func : PT1_show_status_func stop
 Single_Board_PT1_Test : Only find 114 ASIC

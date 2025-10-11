@@ -37,8 +37,8 @@ static struct class *fpga_mem_class;
 static void __iomem *base_vir_addr;      /* ioremap'd virtual address */
 static void *base_vir_mem_addr;          /* Memory region structure */
 
-/* Debug: Track mmap operations */
-static atomic_t mmap_count = ATOMIC_INIT(0);
+/* Debug: Track mmap operations (simple counter, no atomics needed) */
+static int mmap_count = 0;
 
 /* File operations */
 static int fpga_mem_open(struct inode *inode, struct file *filp)
@@ -60,7 +60,7 @@ static int fpga_mem_mmap(struct file *filp, struct vm_area_struct *vma)
     unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
     unsigned long size = vma->vm_end - vma->vm_start;
     unsigned long pfn = fpga_mem_offset_addr >> PAGE_SHIFT;
-    int mmap_id = atomic_inc_return(&mmap_count);
+    int mmap_id = ++mmap_count;  /* Simple increment, single-threaded access */
 
     pr_info("[FPGA_MEM] mmap() #%d called by PID %d (%s)\n",
             mmap_id, current->pid, current->comm);
@@ -74,8 +74,8 @@ static int fpga_mem_mmap(struct file *filp, struct vm_area_struct *vma)
     vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
     vma->vm_flags |= VM_IO | VM_DONTEXPAND | VM_DONTDUMP;
 
-    pr_info("[FPGA_MEM]   Page protection: 0x%lx\n",
-            pgprot_val(vma->vm_page_prot));
+    pr_info("[FPGA_MEM]   Page protection: 0x%x\n",
+            (unsigned int)pgprot_val(vma->vm_page_prot));
 
     /* Map physical FPGA memory to userspace */
     if (remap_pfn_range(vma, vma->vm_start, pfn, size, vma->vm_page_prot)) {
@@ -115,8 +115,8 @@ static int __init fpga_mem_init(void)
     pr_info("[FPGA_MEM] Allocated chrdev region: major %d, minor %d\n",
             MAJOR(fpga_mem_num), MINOR(fpga_mem_num));
 
-    /* Allocate and initialize cdev structure */
-    p_fpga_mem = cdev_alloc();
+    /* Allocate and initialize cdev structure (using kmalloc like stock driver) */
+    p_fpga_mem = kmalloc(sizeof(struct cdev), GFP_KERNEL);
     if (!p_fpga_mem) {
         pr_err("[FPGA_MEM] ERROR: Failed to allocate cdev\n");
         ret = -ENOMEM;
@@ -203,8 +203,7 @@ static void __exit fpga_mem_exit(void)
 {
     pr_info("[FPGA_MEM] ======================================\n");
     pr_info("[FPGA_MEM] Removing driver\n");
-    pr_info("[FPGA_MEM] Total mmap operations: %d\n",
-            atomic_read(&mmap_count));
+    pr_info("[FPGA_MEM] Total mmap operations: %d\n", mmap_count);
 
     device_destroy(fpga_mem_class, fpga_mem_num);
     pr_info("[FPGA_MEM] Destroyed device node\n");
@@ -232,6 +231,7 @@ static void __exit fpga_mem_exit(void)
 module_init(fpga_mem_init);
 module_exit(fpga_mem_exit);
 
+MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("HashSource (reimplemented from Bitmain)");
 MODULE_DESCRIPTION("FPGA Memory Access Driver with Debug Logging");
 MODULE_VERSION("1.0-debug");

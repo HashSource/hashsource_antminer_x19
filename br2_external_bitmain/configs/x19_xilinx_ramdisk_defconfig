@@ -1,4 +1,4 @@
-# shellcheck disable=SC2148
+# shellcheck disable=all
 
 # Architecture
 BR2_arm=y
@@ -10,16 +10,15 @@ BR2_ARM_FPU_VFPV3D16=y
 # Global patch directory for package patches
 BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_X19_BITMAIN_PATH)/board/x19_xilinx/patches"
 
-# Toolchain - MUST match stock kernel 4.6.0-xilinx exactly
-BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
-# Kernel headers 4.6.x for userspace ABI compatibility with stock kernel
-# Using custom tarball since 4.6 was removed from Buildroot in 2017.02
-# Declaring as 4.4.x series (4.6 is compatible with 4.4 ABI)
-BR2_KERNEL_HEADERS_CUSTOM_TARBALL=y
-BR2_KERNEL_HEADERS_CUSTOM_TARBALL_LOCATION="https://cdn.kernel.org/pub/linux/kernel/v4.x/linux-4.6.tar.xz"
-BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_6=y
-BR2_TOOLCHAIN_BUILDROOT_CXX=y
-# Use default GCC version (currently 14.x)
+# Toolchain - Linaro GCC 7.2-2017.11 (EXACT match for stock kernel modules)
+# Stock kernel & modules were built with: gcc version 7.2.1 20171011 (Linaro GCC 7.2-2017.11)
+# BR2_TOOLCHAIN_BUILDROOT is not set
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM=y
+BR2_TOOLCHAIN_EXTERNAL_DOWNLOAD=y
+BR2_TOOLCHAIN_EXTERNAL_URL="https://releases.linaro.org/components/toolchain/binaries/7.2-2017.11/arm-linux-gnueabihf/gcc-linaro-7.2.1-2017.11-x86_64_arm-linux-gnueabihf.tar.xz"
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM_PREFIX="arm-linux-gnueabihf"
+BR2_TOOLCHAIN_EXTERNAL_GCC_7=y
 
 # System configuration
 BR2_TARGET_GENERIC_HOSTNAME="HashSource"
@@ -39,8 +38,15 @@ BR2_ENABLE_LTO=y
 # NO BOOTLOADER - Using stock BOOT.bin from NAND
 # BR2_TARGET_UBOOT is not set
 
-# NO KERNEL - Using stock kernel from NAND at 0x2000000
-# BR2_LINUX_KERNEL is not set
+# Kernel - Build 4.6 to provide source for kernel module compilation
+# Note: We use the stock kernel from NAND, but need source tree for building modules
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="https://cdn.kernel.org/pub/linux/kernel/v4.x/linux-4.6.tar.xz"
+BR2_LINUX_KERNEL_DEFCONFIG="multi_v7"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_X19_BITMAIN_PATH)/board/x19_xilinx/linux-extra.config"
+# Don't install kernel - we use stock
+# BR2_LINUX_KERNEL_INSTALL_TARGET is not set
 
 # Filesystem - ext4 ramdisk for FIT image packaging
 BR2_TARGET_ROOTFS_EXT2=y
