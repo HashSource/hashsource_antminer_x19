@@ -19,6 +19,7 @@ INC_DIR = include
 DRV_DIR = drivers
 OBJ_DIR = obj
 BIN_DIR = bin
+KMOD_DIR = $(SRC_DIR)/kernel_modules
 
 # Target binaries
 TARGET = $(BIN_DIR)/hashsource_miner
@@ -86,6 +87,11 @@ CFLAGS += -D_GNU_SOURCE
 
 # Linker flags
 LDFLAGS = -pthread -lm -lrt
+
+# Kernel module settings
+# KERNEL_SRC must be passed by Buildroot (points to Linux 4.6.0 source)
+# ARCH is always arm for Xilinx Zynq-7007 on S19 Pro
+ARCH = arm
 
 # Default target
 all: dirs $(TARGET) $(FAN_TEST) $(FPGA_LOGGER) $(PSU_TEST) $(ID2MAC) $(EEPROM_DETECT) $(CHAIN_TEST) $(WORK_TEST) $(PATTERN_TEST) $(PATTERN_PARSER) $(TEST_FIXTURE_SHIM)
@@ -191,10 +197,39 @@ $(OBJ_DIR)/%.o: $(DRV_DIR)/%.c
 	@echo "Compiling $<"
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Build kernel modules (if KERNEL_SRC is available)
+modules:
+	@if [ -d "$(KERNEL_SRC)" ]; then \
+		echo "========================================"; \
+		echo "Building kernel modules"; \
+		echo "========================================"; \
+		echo "Kernel source: $(KERNEL_SRC)"; \
+		$(MAKE) -C $(KERNEL_SRC) M=$(realpath $(KMOD_DIR)) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) modules; \
+		echo "Kernel modules built successfully"; \
+	else \
+		echo "========================================"; \
+		echo "WARNING: Kernel source not found"; \
+		echo "KERNEL_SRC is not set or does not exist"; \
+		echo "Skipping kernel module build"; \
+		echo "========================================"; \
+	fi
+
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts"
 	rm -rf $(OBJ_DIR) $(BIN_DIR)
+
+# Clean kernel modules
+modules-clean:
+	@if [ -d "$(KMOD_DIR)" ]; then \
+		rm -f $(KMOD_DIR)/*.o $(KMOD_DIR)/*.ko $(KMOD_DIR)/*.mod.c $(KMOD_DIR)/*.mod.o; \
+		rm -f $(KMOD_DIR)/*.order $(KMOD_DIR)/*.symvers $(KMOD_DIR)/.*.cmd; \
+		rm -rf $(KMOD_DIR)/.tmp_versions; \
+		echo "Kernel modules cleaned"; \
+	fi
+
+# Clean everything including kernel modules
+distclean: clean modules-clean
 
 # Install to target filesystem
 install: $(TARGET)
@@ -219,4 +254,4 @@ help:
 	@echo "  Set CROSS_COMPILE to your toolchain prefix"
 	@echo "  Example: make CROSS_COMPILE=arm-buildroot-linux-gnueabihf-"
 
-.PHONY: all dirs clean install config startup help
+.PHONY: all dirs clean modules modules-clean distclean install config startup help

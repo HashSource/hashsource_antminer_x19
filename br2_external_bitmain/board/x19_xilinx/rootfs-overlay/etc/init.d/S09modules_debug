@@ -1,0 +1,92 @@
+#!/bin/sh
+#
+# S09modules_debug - Load debug kernel modules with extensive logging
+#
+# This script runs BEFORE S10modules and loads the debug versions of
+# bitmain_axi and fpga_mem_driver that include detailed logging.
+#
+# To switch between debug and stock modules:
+#   DEBUG:  chmod +x /etc/init.d/S09modules_debug
+#   STOCK:  chmod -x /etc/init.d/S09modules_debug
+#
+
+DEBUG_MODULE_DIR="/lib/modules/debug"
+USE_DEBUG_MODULES=1  # Set to 0 to disable debug modules
+
+case "$1" in
+	start)
+		if [ "$USE_DEBUG_MODULES" = "1" ] && [ -d "$DEBUG_MODULE_DIR" ]; then
+			echo "========================================"
+			echo "Loading DEBUG kernel modules with logging"
+			echo "========================================"
+
+			# Detect RAM size to determine fpga_mem offset
+			RAM_SIZE=$(free -m | awk '/Mem:/{print $2}')
+			if [ "$RAM_SIZE" -gt 200 ]; then
+				FPGA_MEM_OFFSET=0x0F000000  # 256MB RAM
+				echo "Detected 256MB RAM - using offset 0x0F000000"
+			else
+				FPGA_MEM_OFFSET=0x07000000  # 128MB RAM
+				echo "Detected 128MB RAM - using offset 0x07000000"
+			fi
+
+			# Load debug bitmain_axi module
+			if [ -f "$DEBUG_MODULE_DIR/bitmain_axi.ko" ]; then
+				echo "Loading debug bitmain_axi.ko..."
+				insmod $DEBUG_MODULE_DIR/bitmain_axi.ko
+				if [ $? -eq 0 ]; then
+					echo "  [OK] bitmain_axi.ko loaded"
+				else
+					echo "  [FAIL] bitmain_axi.ko failed to load"
+					exit 1
+				fi
+			else
+				echo "  [SKIP] $DEBUG_MODULE_DIR/bitmain_axi.ko not found"
+			fi
+
+			# Load debug fpga_mem_driver module
+			if [ -f "$DEBUG_MODULE_DIR/fpga_mem_driver.ko" ]; then
+				echo "Loading debug fpga_mem_driver.ko (offset=$FPGA_MEM_OFFSET)..."
+				insmod $DEBUG_MODULE_DIR/fpga_mem_driver.ko fpga_mem_offset_addr=$FPGA_MEM_OFFSET
+				if [ $? -eq 0 ]; then
+					echo "  [OK] fpga_mem_driver.ko loaded"
+				else
+					echo "  [FAIL] fpga_mem_driver.ko failed to load"
+					exit 1
+				fi
+			else
+				echo "  [SKIP] $DEBUG_MODULE_DIR/fpga_mem_driver.ko not found"
+			fi
+
+			echo ""
+			echo "Debug modules loaded successfully!"
+			echo "View kernel logs with: dmesg | grep -E '\\[AXI_FPGA\\]|\\[FPGA_MEM\\]'"
+			echo "========================================"
+
+			# Prevent S10modules from loading stock modules
+			# by marking that modules are already loaded
+			touch /tmp/modules_loaded_debug
+		else
+			echo "Debug modules disabled or not found, will use stock modules"
+		fi
+		;;
+
+	stop)
+		echo "Unloading debug kernel modules..."
+		rmmod fpga_mem_driver 2>/dev/null
+		rmmod bitmain_axi 2>/dev/null
+		rm -f /tmp/modules_loaded_debug
+		echo "Debug modules unloaded"
+		;;
+
+	restart|reload)
+		"$0" stop
+		"$0" start
+		;;
+
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+esac
+
+exit $?

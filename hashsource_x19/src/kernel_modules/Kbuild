@@ -1,0 +1,2 @@
+# Kernel module build definition
+obj-m := bitmain_axi.o fpga_mem_driver.o

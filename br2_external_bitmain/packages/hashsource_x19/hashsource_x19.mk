@@ -16,6 +16,14 @@ define HASHSOURCE_X19_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) CC="$(TARGET_CC)" \
 		CROSS_COMPILE="$(TARGET_CROSS)" \
 		-C $(@D) all
+	@echo "========================================"
+	@echo "Building kernel modules with debug logging"
+	@echo "========================================"
+	-$(TARGET_MAKE_ENV) $(MAKE) CC="$(TARGET_CC)" \
+		CROSS_COMPILE="$(TARGET_CROSS)" \
+		KERNEL_SRC="$(BUILD_DIR)/linux-headers-custom" \
+		ARCH=arm \
+		-C $(@D) modules || echo "WARNING: Kernel module build failed (may need kernel source)"
 endef
 
 # INSTALL_TARGET_CMDS intentionally left empty - binaries are built but not installed
@@ -37,6 +45,14 @@ define HASHSOURCE_X19_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/bin/hashsource_miner
 	$(INSTALL) -D -m 0755 $(@D)/bin/id2mac \
 		$(TARGET_DIR)/usr/bin/id2mac
+	$(INSTALL) -D -m 0755 $(@D)/bin/chain_test \
+		$(TARGET_DIR)/usr/bin/chain_test
+	$(INSTALL) -D -m 0755 $(@D)/bin/work_test \
+		$(TARGET_DIR)/usr/bin/work_test
+	$(INSTALL) -D -m 0755 $(@D)/bin/pattern_test \
+		$(TARGET_DIR)/usr/bin/pattern_test
+	$(INSTALL) -D -m 0755 $(@D)/bin/pattern_parser \
+		$(TARGET_DIR)/usr/bin/pattern_parser
 	$(INSTALL) -D -m 0755 $(@D)/bin/test_fixture_shim.so \
 		$(TARGET_DIR)/root/test_fixture/test_fixture_shim.so
 	if [ -f $(@D)/config/miner.conf ]; then \
@@ -46,6 +62,17 @@ define HASHSOURCE_X19_INSTALL_TARGET_CMDS
 	if [ -f $(@D)/config/S90hashsource ]; then \
 		$(INSTALL) -D -m 0755 $(@D)/config/S90hashsource \
 			$(TARGET_DIR)/etc/init.d/S90hashsource; \
+	fi
+	@echo "Installing debug kernel modules..."
+	@mkdir -p $(TARGET_DIR)/lib/modules/debug
+	-if [ -f $(@D)/src/kernel_modules/bitmain_axi.ko ]; then \
+		$(INSTALL) -D -m 0644 $(@D)/src/kernel_modules/bitmain_axi.ko \
+			$(TARGET_DIR)/lib/modules/debug/bitmain_axi.ko; \
+		$(INSTALL) -D -m 0644 $(@D)/src/kernel_modules/fpga_mem_driver.ko \
+			$(TARGET_DIR)/lib/modules/debug/fpga_mem_driver.ko; \
+		echo "Installed debug kernel modules to /lib/modules/debug/"; \
+	else \
+		echo "WARNING: Kernel modules not built, skipping installation"; \
 	fi
 endef
 
