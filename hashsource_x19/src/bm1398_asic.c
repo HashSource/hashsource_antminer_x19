@@ -119,6 +119,269 @@ void fpga_write_indirect(bm1398_context_t *ctx, int logical_index, uint32_t valu
     __sync_synchronize();  // Force write to hardware (not cached)
 }
 
+/**
+ * Toggle chain enable bit in FPGA register 13 (SET → CLEAR pulse)
+ *
+ * This creates a reset/enable pulse for the chain:
+ * 1. Read register 13
+ * 2. SET the bit for this chain
+ * 3. Wait 500ms
+ * 4. CLEAR the bit for this chain
+ * 5. Wait 500ms
+ *
+ * From PT1 decompilation: sub_22BA4 / sub_22BD0
+ */
+int fpga_toggle_chain_enable(bm1398_context_t *ctx, int chain) {
+    if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
+        return -1;
+    }
+
+    // Read current value of register 13
+    uint32_t reg13_value = fpga_read_indirect(ctx, 13);
+    printf("  FPGA reg 13 before: 0x%08X\n", reg13_value);
+
+    // SET bit for chain (sub_22BA4)
+    uint32_t chain_bit = (1U << chain);
+    fpga_write_indirect(ctx, 13, reg13_value | chain_bit);
+    printf("  FPGA reg 13 SET bit %d: 0x%08X\n", chain, reg13_value | chain_bit);
+    usleep(500000);  // 500ms delay (0x7A120)
+
+    // CLEAR bit for chain (sub_22BD0)
+    reg13_value = fpga_read_indirect(ctx, 13);  // Re-read current value
+    fpga_write_indirect(ctx, 13, reg13_value & ~chain_bit);
+    printf("  FPGA reg 13 CLEAR bit %d: 0x%08X\n", chain, reg13_value & ~chain_bit);
+    usleep(500000);  // 500ms delay
+
+    return 0;
+}
+
+/**
+ * Set chain baud rate divisor in FPGA register 15
+ *
+ * This sets the FPGA-side baud rate divisor for the chain.
+ * Different chains use different bit fields in the 32-bit register:
+ * - Chain 0: bits [5:0]
+ * - Chain 1: bits [13:8]
+ * - Chain 2: bits [21:16]
+ * - Chain 3: bits [29:24]
+ *
+ * From PT1 decompilation: sub_22E08
+ */
+int fpga_set_chain_baud_divisor(bm1398_context_t *ctx, int chain, uint8_t divisor) {
+    if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
+        return -1;
+    }
+
+    // Read current value of register 15
+    uint32_t reg15_value = fpga_read_indirect(ctx, 15);
+    printf("  FPGA reg 15 before: 0x%08X\n", reg15_value);
+
+    // Mask and set the 6-bit divisor value for the appropriate chain
+    uint32_t masked_divisor = divisor & 0x3F;  // 6 bits
+    uint32_t new_value;
+
+    switch (chain) {
+        case 0:
+            new_value = (reg15_value & 0xFFFFFFC0) | masked_divisor;
+            break;
+        case 1:
+            new_value = (reg15_value & 0xFFFFC0FF) | (masked_divisor << 8);
+            break;
+        case 2:
+            new_value = (reg15_value & 0xFFC0FFFF) | (masked_divisor << 16);
+            break;
+        case 3:
+            new_value = (reg15_value & 0xC0FFFFFF) | (masked_divisor << 24);
+            break;
+        default:
+            return -1;
+    }
+
+    fpga_write_indirect(ctx, 15, new_value);
+    printf("  FPGA reg 15 after (chain %d, divisor %d): 0x%08X\n", chain, divisor, new_value);
+
+    return 0;
+}
+
+/**
+ * Initialize FPGA chain work buffers
+ *
+ * This function initializes memory buffers that the FPGA uses for work
+ * distribution to the chain. Without this, the FPGA may not have the correct
+ * buffer structure to send work or receive nonces.
+ *
+ * From PT1 decompilation: sub_2AB50
+ * Copies 512-byte (0x200) template buffer to chain-specific memory regions
+ *
+ * NOTE: This is a placeholder implementation. The actual buffer addresses and
+ * template data need to be determined from the FPGA memory map.
+ */
+// 512-byte FPGA buffer template extracted from single_board_test at 0x48FD4
+// This is an ASIC register configuration table used by the FPGA for work packet generation
+static const uint8_t fpga_buffer_template[512] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x98, 0x13, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
+    0x08, 0x00, 0x00, 0x00, 0x44, 0x01, 0x20, 0xc0, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x18, 0x00, 0x00, 0x00, 0x05, 0xba, 0x00, 0x00, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x20, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x28, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x06, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x00,
+    0x30, 0x00, 0x00, 0x00, 0x9c, 0x00, 0x00, 0x00, 0x34, 0x00, 0x00, 0x00, 0xf8, 0x00, 0x00, 0x00,
+    0x38, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x44, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+    0x48, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x4c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x58, 0x00, 0x00, 0x00, 0x11, 0x21, 0x11, 0x02, 0x5c, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
+    0x60, 0x00, 0x00, 0x00, 0x64, 0x01, 0x30, 0x20, 0x64, 0x00, 0x00, 0x00, 0x64, 0x01, 0x30, 0x20,
+    0x68, 0x00, 0x00, 0x00, 0x71, 0x01, 0x70, 0x20, 0x6c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x70, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x74, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x78, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x90, 0x00, 0x00, 0x00, 0x70, 0x40, 0x00, 0x00, 0x94, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x98, 0x00, 0x00, 0x00, 0x30, 0x30, 0x30, 0x30, 0x9c, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
+    0xa0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa4, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
+    0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xac, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbc, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00,
+    0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc4, 0x00, 0x00, 0x00, 0x00, 0x28, 0x30, 0x00,
+    0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xe8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xec, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+int fpga_init_chain_buffers(bm1398_context_t *ctx, int chain) {
+    if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
+        return -1;
+    }
+
+    if (!ctx->fpga_mem || ctx->fpga_mem == MAP_FAILED) {
+        fprintf(stderr, "Error: fpga_mem not mapped\n");
+        return -1;
+    }
+
+    printf("  Initializing FPGA work buffers for chain %d...\n", chain);
+
+    // Buffer layout in /dev/fpga_mem (from sub_2AB50 decompilation):
+    // Main chain buffer: fpga_mem + 0x14D634 + 512 * chain_id
+    // Work queue buffers: fpga_mem + 0x14DE4C + 0x20000 * chain_id (256 x 512-byte buffers)
+
+    // Calculate buffer addresses
+    uint8_t *main_buffer = (uint8_t *)(ctx->fpga_mem + 0x14D634 + 512 * chain);
+    uint8_t *work_buffers_start = (uint8_t *)(ctx->fpga_mem + 0x14DE4C + 0x20000 * chain);
+    uint8_t *work_buffers_end = (uint8_t *)(ctx->fpga_mem + 0x16DE4C + 0x20000 * chain);
+
+    // Copy template to work queue buffers (256 copies)
+    uint8_t *ptr = work_buffers_start;
+    int buffer_count = 0;
+    while (ptr < work_buffers_end) {
+        memcpy(ptr, fpga_buffer_template, 512);
+        ptr += 512;
+        buffer_count++;
+    }
+
+    // Copy template to main chain buffer
+    memcpy(main_buffer, fpga_buffer_template, 512);
+
+    printf("    Main buffer:  fpga_mem + 0x%lX (512 bytes)\n",
+           (unsigned long)(main_buffer - ctx->fpga_mem));
+    printf("    Work buffers: fpga_mem + 0x%lX to 0x%lX (%d x 512 bytes)\n",
+           (unsigned long)(work_buffers_start - ctx->fpga_mem),
+           (unsigned long)(work_buffers_end - ctx->fpga_mem),
+           buffer_count);
+
+    return 0;
+}
+
+/**
+ * Software core reset after buffer initialization
+ *
+ * PT1 performs this sequence after fpga_init_chain_buffers() to reset ASIC cores
+ * and synchronize them with the new buffer configuration.
+ *
+ * Source: sub_1D07C() at 0x1D07C in single_board_test
+ */
+int bm1398_software_reset_cores(bm1398_context_t *ctx, int chain) {
+    if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
+        return -1;
+    }
+
+    printf("  Performing software core reset...\n");
+
+    // Step 1: CLK_CTRL - clear bit 2
+    printf("    CLK_CTRL: clear bit 2...\n");
+    if (bm1398_read_modify_write_register(ctx, chain, ASIC_REG_CLK_CTRL, 0x04, 0x00) < 0) {
+        fprintf(stderr, "Error: Failed to clear CLK_CTRL bit 2\n");
+        return -1;
+    }
+    usleep(10000);
+
+    // Step 2: RESET_CTRL - clear bit 3
+    printf("    RESET_CTRL: clear bit 3...\n");
+    if (bm1398_read_modify_write_register(ctx, chain, ASIC_REG_RESET_CTRL, 0x08, 0x00) < 0) {
+        fprintf(stderr, "Error: Failed to clear RESET_CTRL bit 3\n");
+        return -1;
+    }
+    usleep(10000);
+
+    // Step 3: CLK_CTRL - set BYTE2 bit 6, clear HIBYTE bits 4-7
+    printf("    CLK_CTRL: set byte2 bit 6, clear hibyte...\n");
+    uint32_t clk_val;
+    if (bm1398_read_register(ctx, chain, false, 0, ASIC_REG_CLK_CTRL, &clk_val, 100) < 0) {
+        fprintf(stderr, "Error: Failed to read CLK_CTRL\n");
+        return -1;
+    }
+    clk_val = (clk_val & 0x0FBFFFFF) | 0x00400000;  // Set BYTE2 bit 6, clear HIBYTE high nibble
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, clk_val) < 0) {
+        fprintf(stderr, "Error: Failed to write CLK_CTRL\n");
+        return -1;
+    }
+    usleep(10000);
+
+    // Step 4: CLK_CTRL - clear BYTE2 bit 6, set HIBYTE bits 4-7
+    printf("    CLK_CTRL: clear byte2 bit 6, set hibyte...\n");
+    clk_val = (clk_val & 0xFFBFFFFF) | 0xF0000000;  // Clear BYTE2 bit 6, set HIBYTE high nibble
+    if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, clk_val) < 0) {
+        fprintf(stderr, "Error: Failed to write CLK_CTRL\n");
+        return -1;
+    }
+    usleep(10000);
+
+    // Step 5: CLK_CTRL - set bit 2
+    printf("    CLK_CTRL: set bit 2...\n");
+    if (bm1398_read_modify_write_register(ctx, chain, ASIC_REG_CLK_CTRL, 0x00, 0x04) < 0) {
+        fprintf(stderr, "Error: Failed to set CLK_CTRL bit 2\n");
+        return -1;
+    }
+    usleep(10000);
+
+    // Step 6: RESET_CTRL - set bit 3
+    printf("    RESET_CTRL: set bit 3...\n");
+    if (bm1398_read_modify_write_register(ctx, chain, ASIC_REG_RESET_CTRL, 0x00, 0x08) < 0) {
+        fprintf(stderr, "Error: Failed to set RESET_CTRL bit 3\n");
+        return -1;
+    }
+    usleep(10000);
+
+    // Step 7: Set ticket mask to 0xFFFFFFFF (enable all cores)
+    printf("    Setting ticket mask to 0xFFFFFFFF...\n");
+    if (bm1398_set_ticket_mask(ctx, chain, TICKET_MASK_ALL_CORES) < 0) {
+        fprintf(stderr, "Error: Failed to set ticket mask\n");
+        return -1;
+    }
+    usleep(10000);
+
+    // Step 8: Clear UART RX FIFO (TODO: implement if needed)
+    // For now, just delay to allow any pending responses to clear
+    usleep(50000);  // 50ms settle time
+
+    printf("    Software core reset complete\n");
+    return 0;
+}
+
 //==============================================================================
 // Initialization and Cleanup
 //==============================================================================
@@ -130,23 +393,48 @@ int bm1398_init(bm1398_context_t *ctx) {
 
     memset(ctx, 0, sizeof(*ctx));
 
-    // Open FPGA device
-    int fd = open("/dev/axi_fpga_dev", O_RDWR | O_SYNC);
-    if (fd < 0) {
+    // Open FPGA register device (/dev/axi_fpga_dev)
+    ctx->fd_regs = open("/dev/axi_fpga_dev", O_RDWR | O_SYNC);
+    if (ctx->fd_regs < 0) {
         fprintf(stderr, "Error: Cannot open /dev/axi_fpga_dev: %s\n", strerror(errno));
         fprintf(stderr, "Hint: Ensure bitmain_axi.ko kernel module is loaded\n");
         return -1;
     }
 
-    // Memory map FPGA registers
+    // Memory map FPGA registers (4608 bytes = 0x1200)
     ctx->fpga_regs = mmap(NULL, FPGA_REG_SIZE, PROT_READ | PROT_WRITE,
-                          MAP_SHARED, fd, 0);
-    close(fd);
-
+                          MAP_SHARED, ctx->fd_regs, 0);
     if (ctx->fpga_regs == MAP_FAILED) {
-        fprintf(stderr, "Error: mmap failed: %s\n", strerror(errno));
+        fprintf(stderr, "Error: mmap failed for /dev/axi_fpga_dev: %s\n", strerror(errno));
+        close(ctx->fd_regs);
         return -1;
     }
+
+    // Open FPGA buffer memory device (/dev/fpga_mem)
+    ctx->fd_mem = open("/dev/fpga_mem", O_RDWR | O_SYNC);
+    if (ctx->fd_mem < 0) {
+        fprintf(stderr, "Error: Cannot open /dev/fpga_mem: %s\n", strerror(errno));
+        fprintf(stderr, "Hint: Ensure bitmain_axi.ko kernel module is loaded\n");
+        munmap((void *)ctx->fpga_regs, FPGA_REG_SIZE);
+        close(ctx->fd_regs);
+        return -1;
+    }
+
+    // Memory map FPGA buffer space (16 MB = 0x1000000)
+    #define FPGA_MEM_SIZE 0x1000000
+    ctx->fpga_mem = mmap(NULL, FPGA_MEM_SIZE, PROT_READ | PROT_WRITE,
+                         MAP_SHARED, ctx->fd_mem, 0);
+    if (ctx->fpga_mem == MAP_FAILED) {
+        fprintf(stderr, "Error: mmap failed for /dev/fpga_mem: %s\n", strerror(errno));
+        munmap((void *)ctx->fpga_regs, FPGA_REG_SIZE);
+        close(ctx->fd_regs);
+        close(ctx->fd_mem);
+        return -1;
+    }
+
+    printf("FPGA devices mapped:\n");
+    printf("  /dev/axi_fpga_dev: %p (0x%X bytes)\n", (void *)ctx->fpga_regs, FPGA_REG_SIZE);
+    printf("  /dev/fpga_mem:     %p (0x%X bytes)\n", (void *)ctx->fpga_mem, FPGA_MEM_SIZE);
 
     ctx->initialized = true;
     ctx->num_chains = 0;
@@ -288,10 +576,30 @@ int bm1398_init(bm1398_context_t *ctx) {
 }
 
 void bm1398_cleanup(bm1398_context_t *ctx) {
-    if (ctx && ctx->fpga_regs && ctx->fpga_regs != MAP_FAILED) {
+    if (!ctx) return;
+
+    // Unmap FPGA buffer memory
+    if (ctx->fpga_mem && ctx->fpga_mem != MAP_FAILED) {
+        munmap((void *)ctx->fpga_mem, 0x1000000);
+        ctx->fpga_mem = NULL;
+    }
+
+    // Unmap FPGA registers
+    if (ctx->fpga_regs && ctx->fpga_regs != MAP_FAILED) {
         munmap((void *)ctx->fpga_regs, FPGA_REG_SIZE);
         ctx->fpga_regs = NULL;
     }
+
+    // Close file descriptors
+    if (ctx->fd_mem >= 0) {
+        close(ctx->fd_mem);
+        ctx->fd_mem = -1;
+    }
+    if (ctx->fd_regs >= 0) {
+        close(ctx->fd_regs);
+        ctx->fd_regs = -1;
+    }
+
     ctx->initialized = false;
 }
 
@@ -690,43 +998,48 @@ int bm1398_read_modify_write_register(bm1398_context_t *ctx, int chain,
 int bm1398_reset_chain_stage1(bm1398_context_t *ctx, int chain) {
     printf("Stage 1: Hardware reset chain %d...\n", chain);
 
-    // Hardware reset sequence verified from Binary Ninja analysis
-    // Source: Bitmain single_board_test.c sub_1d07c @ 0x1d07c
-    //
-    // It writes known-good values directly. Register reads don't work
-    // reliably during early initialization.
+    // CRITICAL: Values extracted from single_board_test PT2 FPGA register dump
+    // These exact register values are required for ASIC cores to hash.
+    // DO NOT modify without comparing against working single_board_test behavior!
 
-    // Step 1: Soft reset disable (register 0x18)
-    printf("  Soft reset disable (reg 0x18)...\n");
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0x00000000);
+    // Step 1: Send chain inactive to prepare for register writes
+    printf("  Chain inactive...\n");
+    if (bm1398_chain_inactive(ctx, chain) < 0) {
+        fprintf(stderr, "Warning: Chain inactive failed\n");
+    }
     usleep(10000);
 
-    // Step 2: Clear power control bit (register 0x34)
-    printf("  Clear power control bit (reg 0x34)...\n");
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_RESET_CTRL, 0x00000000);
+    // Step 2: Configure CLK_CTRL with baud divisor pattern
+    printf("  Write reg 0x18 = 0x0000BA01...\n");
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0x0000BA01);
     usleep(10000);
 
-    // Step 3: Core reset enable (register 0x18)
-    printf("  Core reset enable (reg 0x18)...\n");
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0x0F400000);
+    // Step 3: Configure register 0x34 (exact function unknown, but critical)
+    printf("  Write reg 0x34 = 0x000000F0...\n");
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_RESET_CTRL, 0x000000F0);
     usleep(10000);
 
-    // Step 4: Core reset disable (register 0x18)
-    printf("  Core reset disable (reg 0x18)...\n");
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0xF0000000);
+    // Step 4: Update CLK_CTRL (adds bit 14 = 0x4000)
+    printf("  Write reg 0x18 = 0x0040BA01...\n");
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0x0040BA01);
     usleep(10000);
 
-    // Step 5: Soft reset enable (register 0x18)
-    printf("  Soft reset enable (reg 0x18)...\n");
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0xF0000400);
+    // Step 5: Update CLK_CTRL (sets upper nibble 0xF0)
+    printf("  Write reg 0x18 = 0xF000BA01...\n");
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0xF000BA01);
     usleep(10000);
 
-    // Step 6: Set power control bit (register 0x34)
-    printf("  Set power control bit (reg 0x34)...\n");
-    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_RESET_CTRL, 0x00000008);
+    // Step 6: Final CLK_CTRL adjustment (changes LSB from 0x01 to 0x05)
+    printf("  Write reg 0x18 = 0xF000BA05...\n");
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_CLK_CTRL, 0xF000BA05);
     usleep(10000);
 
-    // Step 7: Set ticket mask to all cores enabled (initialization value)
+    // Step 7: Final register 0x34 configuration
+    printf("  Write reg 0x34 = 0x000000F8...\n");
+    bm1398_write_register(ctx, chain, true, 0, ASIC_REG_RESET_CTRL, 0x000000F8);
+    usleep(10000);
+
+    // Step 8: Set ticket mask to all cores enabled
     printf("  Setting ticket mask to 0xFFFFFFFF...\n");
     if (bm1398_write_register(ctx, chain, true, 0, ASIC_REG_TICKET_MASK,
                               TICKET_MASK_ALL_CORES) < 0) {
@@ -734,6 +1047,13 @@ int bm1398_reset_chain_stage1(bm1398_context_t *ctx, int chain) {
         return -1;
     }
     usleep(50000);  // 50ms settle time
+
+    // Step 9: Send chain inactive again (per single_board_test sequence)
+    printf("  Chain inactive (final)...\n");
+    if (bm1398_chain_inactive(ctx, chain) < 0) {
+        fprintf(stderr, "Warning: Final chain inactive failed\n");
+    }
+    usleep(10000);
 
     printf("  Stage 1 complete\n");
     return 0;
@@ -981,7 +1301,48 @@ int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
 }
 
 /**
+ * PT2-style minimal initialization (hardware reset + Stage 1 only)
+ *
+ * This function replicates the PT2 test behavior where ASICs are assumed
+ * to be pre-configured (from PT1 or bootloader) and only need Stage 1 reset.
+ *
+ * CRITICAL: Stage 1 register values MUST NOT be overwritten after this!
+ * DO NOT call Stage 2 functions that modify registers 0x18, 0x34, etc.
+ */
+int bm1398_init_chain_pt2_style(bm1398_context_t *ctx, int chain) {
+    if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
+        return -1;
+    }
+
+    printf("\n====================================\n");
+    printf("Initializing Chain %d\n", chain);
+    printf("====================================\n\n");
+
+    // Step 1: FPGA hardware reset (physical reset line toggle)
+    if (bm1398_hardware_reset_chain(ctx, chain) < 0) {
+        fprintf(stderr, "Error: Hardware reset failed\n");
+        return -1;
+    }
+
+    // Step 2: Stage 1 ONLY - set final register values
+    // No Stage 2 configuration that would overwrite these!
+    if (bm1398_reset_chain_stage1(ctx, chain) < 0) {
+        fprintf(stderr, "Error: Stage 1 failed\n");
+        return -1;
+    }
+
+    printf("\n====================================\n");
+    printf("Chain %d initialization complete\n", chain);
+    printf("====================================\n\n");
+
+    return 0;
+}
+
+/**
  * Complete chain initialization (hardware reset + both config stages)
+ *
+ * This is for PT1-style cold boot initialization.
+ * Use bm1398_init_chain_pt2_style() for PT2 pattern tests!
  */
 int bm1398_init_chain(bm1398_context_t *ctx, int chain) {
     if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
@@ -1014,6 +1375,111 @@ int bm1398_init_chain(bm1398_context_t *ctx, int chain) {
 
     printf("\n====================================\n");
     printf("Chain %d initialization complete\n", chain);
+    printf("====================================\n\n");
+
+    return 0;
+}
+
+/**
+ * Complete PT1 initialization with double Stage 1 pattern
+ *
+ * This implements the EXACT PT1 sequence discovered from single_board_test:
+ * 1. Hardware reset
+ * 2. Stage 1 (FIRST TIME) - Initial register setup
+ * 3. Chain inactive
+ * 4. Enumerate ASICs (set addresses)
+ * 5. Set baud rate
+ * 6. Stage 1 (SECOND TIME!) - Finalize registers after enumeration
+ *
+ * Source: Decompiled Single_Board_PT1_Test (0x1D468) from IDA Pro
+ */
+int bm1398_init_chain_pt1_full(bm1398_context_t *ctx, int chain) {
+    if (!ctx || !ctx->initialized || chain < 0 || chain >= MAX_CHAINS) {
+        return -1;
+    }
+
+    printf("\n====================================\n");
+    printf("PT1 Full Initialization - Chain %d\n", chain);
+    printf("====================================\n\n");
+
+    // Step 1: FPGA hardware reset (physical reset line toggle)
+    printf("Step 1: Hardware reset...\n");
+    if (bm1398_hardware_reset_chain(ctx, chain) < 0) {
+        fprintf(stderr, "Error: Hardware reset failed\n");
+        return -1;
+    }
+
+    // Step 2: FIRST Stage 1 call - Initial register setup
+    printf("\nStep 2: Stage 1 (FIRST TIME) - Initial register setup...\n");
+    if (bm1398_reset_chain_stage1(ctx, chain) < 0) {
+        fprintf(stderr, "Error: First Stage 1 failed\n");
+        return -1;
+    }
+
+    // Step 3: Set chain inactive
+    printf("\nStep 3: Set chain inactive...\n");
+    if (bm1398_chain_inactive(ctx, chain) < 0) {
+        fprintf(stderr, "Warning: Chain inactive failed\n");
+    }
+    usleep(10000);  // 10ms delay (from PT1: 0x2710u)
+
+    // Step 4: Enumerate ASIC chips (set addresses)
+    printf("\nStep 4: Enumerate ASICs (set addresses)...\n");
+    int num_chips = CHIPS_PER_CHAIN_S19PRO;
+    if (bm1398_enumerate_chips(ctx, chain, num_chips) < 0) {
+        fprintf(stderr, "Error: Chip enumeration failed\n");
+        return -1;
+    }
+    usleep(10000);  // 10ms delay (from PT1: 0x2710u)
+
+    // Step 5: Set ASIC baud rate (12 MHz from Config.ini)
+    printf("\nStep 5: Set ASIC baud rate to 12MHz...\n");
+    if (bm1398_set_baud_rate(ctx, chain, BAUD_RATE_12MHZ) < 0) {
+        fprintf(stderr, "Error: Baud rate configuration failed\n");
+        return -1;
+    }
+    usleep(50000);  // 50ms delay (from PT1: 0xC350u)
+
+    // Step 6: FPGA register 13 toggle (chain enable pulse)
+    printf("\nStep 6: FPGA register 13 toggle (chain enable pulse)...\n");
+    if (fpga_toggle_chain_enable(ctx, chain) < 0) {
+        fprintf(stderr, "Error: FPGA chain enable toggle failed\n");
+        return -1;
+    }
+
+    // Step 7: Set FPGA baud rate divisor (register 15)
+    printf("\nStep 7: Set FPGA baud rate divisor to 26...\n");
+    if (fpga_set_chain_baud_divisor(ctx, chain, 26) < 0) {
+        fprintf(stderr, "Error: FPGA baud divisor configuration failed\n");
+        return -1;
+    }
+    usleep(10000);  // 10ms delay (from PT1: 0x2710u)
+
+    // Step 8: Initialize FPGA chain work buffers
+    printf("\nStep 8: Initialize FPGA work buffers...\n");
+    if (fpga_init_chain_buffers(ctx, chain) < 0) {
+        fprintf(stderr, "Error: FPGA buffer initialization failed\n");
+        return -1;
+    }
+    usleep(10000);  // 10ms delay (from PT1: 0x2710u)
+
+    // Step 9: Software core reset (CRITICAL for nonces!)
+    printf("\nStep 9: Software core reset...\n");
+    if (bm1398_software_reset_cores(ctx, chain) < 0) {
+        fprintf(stderr, "Error: Software core reset failed\n");
+        return -1;
+    }
+
+    // Step 10: SECOND Stage 1 call - Finalize registers after FPGA config
+    printf("\nStep 10: Stage 1 (SECOND TIME!) - Finalize after FPGA config...\n");
+    if (bm1398_reset_chain_stage1(ctx, chain) < 0) {
+        fprintf(stderr, "Error: Second Stage 1 failed\n");
+        return -1;
+    }
+
+    printf("\n====================================\n");
+    printf("PT1 Full Initialization Complete\n");
+    printf("Chain %d ready for pattern test\n", chain);
     printf("====================================\n\n");
 
     return 0;
@@ -1385,9 +1851,9 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
 
     // Wait for FPGA work FIFO space before sending
     // Factory test checks buffer space to avoid overwhelming FPGA
-    uint32_t buffer_status = ctx->fpga_regs[REG_BUFFER_SPACE];
-    printf("[DEBUG] Buffer space register (0x00C): 0x%08X (chain %d bit=%d)\n",
-           buffer_status, chain, (buffer_status >> chain) & 1);
+    // uint32_t buffer_status = ctx->fpga_regs[REG_BUFFER_SPACE];
+    // printf("[DEBUG] Buffer space register (0x00C): 0x%08X (chain %d bit=%d)\n",
+    //        buffer_status, chain, (buffer_status >> chain) & 1);
 
     int timeout = 1000;  // 1 second max wait
     while (bm1398_check_work_fifo_ready(ctx, chain) < 1 && timeout > 0) {
@@ -1398,8 +1864,8 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
         fprintf(stderr, "Error: Work FIFO timeout on chain %d\n", chain);
         return -1;
     }
-    printf("[DEBUG] FPGA work FIFO ready for chain %d (waited %dms)\n",
-           chain, 1000 - timeout);
+    // printf("[DEBUG] FPGA work FIFO ready for chain %d (waited %dms)\n",
+    //        chain, 1000 - timeout);
 
     // Build work packet (148 bytes = 0x94)
     work_packet_t work;
@@ -1429,21 +1895,21 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
     // This swaps work_id, work_data, and midstates to network byte order
     uint32_t *words = (uint32_t *)&work;
 
-    printf("[DEBUG] Work packet before byte-swap (work_id=%u, chain=%d):\n", work_id, chain);
-    printf("  Header: type=0x%02X chain_id=0x%02X work_id=0x%08X\n",
-           work.work_type, work.chain_id, work.work_id);
-    printf("  First 16 bytes: ");
-    for (int j = 0; j < 16 && j < sizeof(work); j++) {
-        printf("%02x ", ((uint8_t*)&work)[j]);
-    }
-    printf("\n");
+    // printf("[DEBUG] Work packet before byte-swap (work_id=%u, chain=%d):\n", work_id, chain);
+    // printf("  Header: type=0x%02X chain_id=0x%02X work_id=0x%08X\n",
+    //        work.work_type, work.chain_id, work.work_id);
+    // printf("  First 16 bytes: ");
+    // for (int j = 0; j < 16 && j < sizeof(work); j++) {
+    //     printf("%02x ", ((uint8_t*)&work)[j]);
+    // }
+    // printf("\n");
 
     for (int i = 0; i < sizeof(work) / 4; i++) {
         words[i] = __builtin_bswap32(words[i]);
     }
 
-    printf("[DEBUG] After byte-swap, first 4 words: 0x%08X 0x%08X 0x%08X 0x%08X\n",
-           words[0], words[1], words[2], words[3]);
+    // printf("[DEBUG] After byte-swap, first 4 words: 0x%08X 0x%08X 0x%08X 0x%08X\n",
+    //        words[0], words[1], words[2], words[3]);
 
     // Hex dump for debugging
     // printf("  Work Packet Hex Dump (148 bytes):\n");
@@ -1466,17 +1932,17 @@ int bm1398_send_work(bm1398_context_t *ctx, int chain, uint32_t work_id,
 
     int num_words = sizeof(work) / 4;  // 148 bytes / 4 = 37 words
 
-    printf("[DEBUG] Writing %d words to FPGA FIFO at 0x040 (index 16)\n", num_words);
-    printf("[DEBUG] First word: 0x%08X\n", words[0]);
+    // printf("[DEBUG] Writing %d words to FPGA FIFO at 0x040 (index 16)\n", num_words);
+    // printf("[DEBUG] First word: 0x%08X\n", words[0]);
 
     // Write ALL words to index 16 (FIFO at 0x040)
     for (int i = 0; i < num_words; i++) {
         fpga_write_indirect(ctx, FPGA_REG_TW_WRITE_CMD_FIRST, words[i]);
     }
 
-    printf("[DEBUG] Work packet sent to FPGA (work_id=%u, chain=%d)\n", work_id, chain);
-    printf("[DEBUG] FPGA register 0x040 final value: 0x%08X\n",
-           ctx->fpga_regs[0x040 / 4]);
+    // printf("[DEBUG] Work packet sent to FPGA (work_id=%u, chain=%d)\n", work_id, chain);
+    // printf("[DEBUG] FPGA register 0x040 final value: 0x%08X\n",
+    //        ctx->fpga_regs[0x040 / 4]);
 
     usleep(10); // Small delay to prevent overwhelming FPGA
 

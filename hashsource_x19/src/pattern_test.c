@@ -230,12 +230,16 @@ int main(int argc, char *argv[]) {
     usleep(100000);
     printf("FPGA reset complete.\n\n");
 
-    // Initialize chain
-    printf("====================================\n");
-    printf("Initializing Chain %d\n", chain);
-    printf("====================================\n");
-    if (bm1398_init_chain(&ctx, chain) < 0) {
-        fprintf(stderr, "Error: Chain initialization failed\n");
+    // Initialize chain with FULL PT1 sequence (double Stage 1!)
+    // This implements the EXACT sequence discovered from single_board_test:
+    // 1. Hardware reset
+    // 2. Stage 1 (FIRST TIME) - Initial register setup
+    // 3. Chain inactive
+    // 4. Enumerate ASICs (set addresses)
+    // 5. Set baud rate (12 MHz)
+    // 6. Stage 1 (SECOND TIME!) - Finalize registers after enumeration
+    if (bm1398_init_chain_pt1_full(&ctx, chain) < 0) {
+        fprintf(stderr, "Error: PT1 full initialization failed\n");
         bm1398_cleanup(&ctx);
         free(works);
         return 1;

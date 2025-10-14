@@ -123,10 +123,12 @@ int main(int argc, char *argv[]) {
     usleep(100000);  // 100ms reset delay
     printf("FPGA reset complete\n\n");
 
-    // Initialize the chain
-    printf("Initializing chain %d...\n", chain);
-    if (bm1398_init_chain(&ctx, chain) < 0) {
-        fprintf(stderr, "Warning: Chain initialization failed (may already be initialized)\n");
+    // Initialize the chain with PT1 FULL sequence (includes software reset!)
+    printf("Initializing chain %d...\n\n", chain);
+    if (bm1398_init_chain_pt1_full(&ctx, chain) < 0) {
+        fprintf(stderr, "Error: PT1 full initialization failed\n");
+        bm1398_cleanup(&ctx);
+        return 1;
     }
 
     // Reduce voltage to operational level (must match bmminer!)

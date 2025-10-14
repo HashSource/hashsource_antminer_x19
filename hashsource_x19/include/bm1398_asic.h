@@ -138,7 +138,10 @@
 //==============================================================================
 
 typedef struct {
-    volatile uint32_t *fpga_regs;
+    volatile uint32_t *fpga_regs;     // /dev/axi_fpga_dev mapped region (registers)
+    volatile uint8_t *fpga_mem;       // /dev/fpga_mem mapped region (16MB buffer space)
+    int fd_regs;                      // File descriptor for /dev/axi_fpga_dev
+    int fd_mem;                       // File descriptor for /dev/fpga_mem
     int num_chains;
     int chips_per_chain[MAX_CHAINS];
     bool initialized;
@@ -174,6 +177,12 @@ void bm1398_cleanup(bm1398_context_t *ctx);
 uint32_t fpga_read_indirect(bm1398_context_t *ctx, int logical_index);
 void fpga_write_indirect(bm1398_context_t *ctx, int logical_index, uint32_t value);
 
+// FPGA operations discovered from PT1 decompilation
+int fpga_toggle_chain_enable(bm1398_context_t *ctx, int chain);
+int fpga_set_chain_baud_divisor(bm1398_context_t *ctx, int chain, uint8_t divisor);
+int fpga_init_chain_buffers(bm1398_context_t *ctx, int chain);
+int bm1398_software_reset_cores(bm1398_context_t *ctx, int chain);
+
 // Low-level UART commands
 uint8_t bm1398_crc5(const uint8_t *data, unsigned int bits);
 int bm1398_send_uart_cmd(bm1398_context_t *ctx, int chain,
@@ -203,7 +212,9 @@ int bm1398_read_modify_write_register(bm1398_context_t *ctx, int chain,
 int bm1398_reset_chain_stage1(bm1398_context_t *ctx, int chain);
 int bm1398_configure_chain_stage2(bm1398_context_t *ctx, int chain,
                                   uint8_t diode_vdd_mux_sel);
-int bm1398_init_chain(bm1398_context_t *ctx, int chain);
+int bm1398_init_chain(bm1398_context_t *ctx, int chain);  // Full init (PT1-style)
+int bm1398_init_chain_pt2_style(bm1398_context_t *ctx, int chain);  // Minimal PT2 init
+int bm1398_init_chain_pt1_full(bm1398_context_t *ctx, int chain);  // Complete PT1 with double Stage 1
 
 // Baud rate and frequency configuration
 int bm1398_set_baud_rate(bm1398_context_t *ctx, int chain, uint32_t baud_rate);
