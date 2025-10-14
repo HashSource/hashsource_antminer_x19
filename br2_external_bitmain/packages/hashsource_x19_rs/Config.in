@@ -1,9 +1,0 @@
-config BR2_PACKAGE_HASHSOURCE_X19_RS
-	bool "hashsource_x19_rs"
-	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
-	select BR2_PACKAGE_HOST_RUSTC
-	help
-	  HashSource X19 mining software Rust implementation.
-
-	  Hardware control utilities for Bitmain Antminer S19
-	  family ASIC miners.

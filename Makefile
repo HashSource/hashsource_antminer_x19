@@ -29,16 +29,6 @@ hashsource_x19-rebuild:
 hashsource_x19-reconfigure:
 	@$(MAKE) -C $(BUILDROOT_DIR) BR2_EXTERNAL=$(BR2_EXTERNAL) hashsource_x19-reconfigure
 
-# Rust package targets
-hashsource_x19_rs-rebuild:
-	@$(MAKE) -C $(BUILDROOT_DIR) BR2_EXTERNAL=$(BR2_EXTERNAL) hashsource_x19_rs-rebuild
-
-hashsource_x19_rs-dirclean:
-	@$(MAKE) -C $(BUILDROOT_DIR) BR2_EXTERNAL=$(BR2_EXTERNAL) hashsource_x19_rs-dirclean
-
-hashsource_x19_rs-reconfigure:
-	@$(MAKE) -C $(BUILDROOT_DIR) BR2_EXTERNAL=$(BR2_EXTERNAL) hashsource_x19_rs-reconfigure
-
 savedefconfig:
 	@$(MAKE) -C $(BUILDROOT_DIR) BR2_EXTERNAL=$(BR2_EXTERNAL) savedefconfig
 	@echo "Defconfig saved to $(EXTERNAL_DIR)/configs/x19_xilinx_ramdisk_defconfig"

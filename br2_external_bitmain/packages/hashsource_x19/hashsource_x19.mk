@@ -2,9 +2,7 @@
 #
 # hashsource_x19 (C implementation - BUILD ONLY, do not install)
 #
-# NOTE: This package builds the C binaries for reference/testing but does
-#       NOT install them to the target rootfs. Use hashsource_x19_rs (Rust)
-#       for production deployment.
+# NOTE: This package builds the C binaries
 #
 ################################################################################
 
@@ -25,12 +23,6 @@ define HASHSOURCE_X19_BUILD_CMDS
 		ARCH=arm \
 		-C $(@D) modules || echo "WARNING: Kernel module build failed (may need kernel source)"
 endef
-
-# INSTALL_TARGET_CMDS intentionally left empty - binaries are built but not installed
-# to rootfs. This keeps the C code as a reference implementation while using the
-# Rust version (hashsource_x19_rs) in production.
-#
-# To re-enable C binary installation, uncomment the section below:
 
 define HASHSOURCE_X19_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/bin/fan_test \

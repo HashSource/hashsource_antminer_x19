@@ -1,4 +1,3 @@
 # Bitmain X19 Series Custom Packages Menu
 # NOTE: Kernel modules are stock binaries in rootfs-overlay, not built from source
 source "$BR2_EXTERNAL_X19_BITMAIN_PATH/packages/hashsource_x19/Config.in"
-source "$BR2_EXTERNAL_X19_BITMAIN_PATH/packages/hashsource_x19_rs/Config.in"

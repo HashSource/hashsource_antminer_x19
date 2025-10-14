@@ -2,7 +2,11 @@ We are building Firmware for Bitmain Antminer S19 Pro, XILINX Platform. Our goal
 
 The binaries we are working with are stripped without debug symbols, so using the logs provided below will help you understand the functions.
 
-Here is the bmminer binary, with Ghidra, and IDA Pro C,H, and ASM files.
+We have single_board_test decompiled with RetDec, available here:
+
+/home/danielsokil/Downloads/Bitmain_Test_Fixtures/S19_Pro/single_board_test.c
+
+Here is the bmminer binary, with Ghidra, and IDA Pro C,H, and ASM files:
 
 /home/danielsokil/Downloads/Bitmain_Peek/S19_Pro/Antminer-S19-Pro-merge-release-20221226124238/Antminer S19 Pro/zynq7007_NBP1901/update/minerfs.no_header.image_extract/\_ghidra/bins/bmminer-2f464d0989b763718a6fbbdee35424ae
 

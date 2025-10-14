@@ -2,8 +2,4 @@ config BR2_PACKAGE_HASHSOURCE_X19
 	bool "hashsource_x19 (C build only)"
 	help
 	  HashSource custom mining software (C implementation)
-
-	  NOTE: Builds C binaries for reference but does NOT install
-	  to rootfs. Use hashsource_x19_rs for production.
-
 	  Supports X19 Xilinx Zynq platform.
